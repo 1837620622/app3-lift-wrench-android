@@ -66,6 +66,8 @@ fun EngineeringTrendChart(
         else -> AppColors.signal
     }
     val trend = analyzeTrend(values)
+    val scale = values.chartScale()
+    val sampleText = "采样 ${values.size} 点"
     val interactionModifier = if (onClick == null) {
         Modifier
     } else {
@@ -89,17 +91,19 @@ fun EngineeringTrendChart(
             emphasized -> 28.sp
             else -> 18.sp
         }
+        val metaSize = if (emphasized) 13.sp else 11.sp
+        val axisSize = if (emphasized) 12.sp else 10.sp
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             if (size.width <= 48f || size.height <= 48f) return@Canvas
 
             val headerReserved = when {
-                compactHeight -> size.height * 0.35f
-                emphasized -> min(54.dp.toPx(), size.height * 0.22f)
-                else -> min(34.dp.toPx(), size.height * 0.28f)
+                compactHeight -> size.height * 0.38f
+                emphasized -> min(70.dp.toPx(), size.height * 0.25f)
+                else -> min(48.dp.toPx(), size.height * 0.30f)
             }
-            val footerReserved = if (compactHeight) 11.dp.toPx() else 20.dp.toPx()
-            val left = if (emphasized) 34.dp.toPx() else 20.dp.toPx()
+            val footerReserved = if (compactHeight) 15.dp.toPx() else 26.dp.toPx()
+            val left = if (emphasized) 50.dp.toPx() else 36.dp.toPx()
             val right = (size.width - 12.dp.toPx()).coerceAtLeast(left + 1f)
             val top = headerReserved.coerceAtLeast(12.dp.toPx())
             val bottom = (size.height - footerReserved).coerceAtLeast(top + 1f)
@@ -124,26 +128,28 @@ fun EngineeringTrendChart(
                     strokeWidth = 1.dp.toPx(),
                 )
             }
+            drawLine(
+                AppColors.axis.copy(alpha = 0.82f),
+                Offset(left, top),
+                Offset(left, bottom),
+                strokeWidth = 1.4.dp.toPx(),
+            )
+            drawLine(
+                AppColors.axis.copy(alpha = 0.82f),
+                Offset(left, bottom),
+                Offset(right, bottom),
+                strokeWidth = 1.4.dp.toPx(),
+            )
 
-            if (values.size >= 2) {
-                val minAngle = values.minOf { it.first }
-                val maxAngle = max(values.maxOf { it.first }, minAngle + 1.0)
-                val minValue = values.minOf { it.second }
-                val maxValue = values.maxOf { it.second }
-                val rawSpan = maxValue - minValue
-                val valueSpan = if (abs(rawSpan) > 1e-9) rawSpan else max(abs(maxValue) * 0.1, 0.1)
-                val paddedMin = min(0.0, minValue - valueSpan * 0.1)
-                val paddedMax = maxValue + valueSpan * 0.14
-                val valueRange = (paddedMax - paddedMin).coerceAtLeast(1e-6)
-
+            if (values.size >= 2 && scale != null) {
                 fun xFor(angle: Double): Float =
-                    (left + ((angle - minAngle) / (maxAngle - minAngle)).toFloat() * plotWidth)
+                    (left + ((angle - scale.minAngle) / (scale.maxAngle - scale.minAngle)).toFloat() * plotWidth)
                         .takeIf { it.isFinite() }
                         ?.coerceIn(left, right)
                         ?: left
 
                 fun yFor(value: Double): Float =
-                    (bottom - ((value - paddedMin) / valueRange).toFloat() * plotHeight)
+                    (bottom - ((value - scale.paddedMin) / scale.valueRange).toFloat() * plotHeight)
                         .takeIf { it.isFinite() }
                         ?.coerceIn(top, bottom)
                         ?: bottom
@@ -201,9 +207,9 @@ fun EngineeringTrendChart(
                 )
                 if (!compactHeight || emphasized) {
                     Text(
-                        text = "${trend.label} · ${trend.detail}",
+                        text = "${trend.label} · ${trend.detail} · $sampleText",
                         color = if (trend.isStable) AppColors.running else AppColors.textSecondary,
-                        fontSize = if (emphasized) 13.sp else 11.sp,
+                        fontSize = metaSize,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -218,13 +224,55 @@ fun EngineeringTrendChart(
             )
         }
 
+        if (scale != null && !compactHeight) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        top = if (emphasized) 76.dp else 50.dp,
+                        bottom = if (emphasized) 30.dp else 24.dp,
+                    ),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = scale.paddedMax.formatAxis(metric),
+                    color = AppColors.textSecondary,
+                    fontSize = axisSize,
+                    maxLines = 1,
+                )
+                Text(
+                    text = scale.paddedMin.formatAxis(metric),
+                    color = AppColors.textSecondary,
+                    fontSize = axisSize,
+                    maxLines = 1,
+                )
+            }
+        }
+
         if (values.size < 2) {
-            Text(
-                text = metric.emptyText(),
-                color = AppColors.textSecondary,
-                fontSize = if (emphasized) 16.sp else 13.sp,
+            Column(
                 modifier = Modifier.align(Alignment.Center),
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = metric.emptyText(),
+                    color = AppColors.textPrimary,
+                    fontSize = if (emphasized) 16.sp else 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (emphasized) {
+                    Text(
+                        text = "连接扳手并开始动作后自动绘制",
+                        color = AppColors.textSecondary,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
 
         Row(
@@ -237,6 +285,13 @@ fun EngineeringTrendChart(
                 fontSize = if (emphasized) 13.sp else 11.sp,
             )
             Text(
+                text = "转角 ° · ${metric.unit}",
+                color = AppColors.textSecondary,
+                fontSize = if (emphasized) 13.sp else 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
                 values.lastOrNull()?.first?.let { "%.0f°".format(it) } ?: "--°",
                 color = AppColors.textSecondary,
                 fontSize = if (emphasized) 13.sp else 11.sp,
@@ -245,9 +300,34 @@ fun EngineeringTrendChart(
     }
 }
 
+private data class ChartScale(
+    val minAngle: Double,
+    val maxAngle: Double,
+    val paddedMin: Double,
+    val paddedMax: Double,
+) {
+    val valueRange: Double = (paddedMax - paddedMin).coerceAtLeast(1e-6)
+}
+
+private fun List<Pair<Double, Double>>.chartScale(): ChartScale? {
+    if (size < 2) return null
+    val minAngle = minOf { it.first }
+    val maxAngle = max(maxOf { it.first }, minAngle + 1.0)
+    val minValue = minOf { it.second }
+    val maxValue = maxOf { it.second }
+    val rawSpan = maxValue - minValue
+    val valueSpan = if (abs(rawSpan) > 1e-9) rawSpan else max(abs(maxValue) * 0.1, 0.1)
+    return ChartScale(
+        minAngle = minAngle,
+        maxAngle = maxAngle,
+        paddedMin = min(0.0, minValue - valueSpan * 0.1),
+        paddedMax = maxValue + valueSpan * 0.14,
+    )
+}
+
 fun analyzeTrend(values: List<Pair<Double, Double>>): TrendSummary {
     if (values.size < 4) {
-        return TrendSummary("等待趋势", "采样点不足", false)
+        return TrendSummary("等待采集", "连接扳手后绘制曲线", false)
     }
     val recent = values.takeLast(10)
     val firstValue = recent.first().second
@@ -276,9 +356,9 @@ private fun ChartMetric.valueOf(point: MeasuredPoint): Double? = when (this) {
 }
 
 private fun ChartMetric.emptyText(): String = when (this) {
-    ChartMetric.TORQUE -> "等待扭矩与转角数据"
-    ChartMetric.FORCE -> "未标定时不输出正式顶升力"
-    ChartMetric.PRESSURE -> "未设置有效面积时不输出正式压力"
+    ChartMetric.TORQUE -> "等待扳手过程数据"
+    ChartMetric.FORCE -> "未标定：暂不输出正式顶升力"
+    ChartMetric.PRESSURE -> "未设置面积：暂不输出正式压力"
 }
 
 private fun Double?.formatMetric(metric: ChartMetric): String {
@@ -288,4 +368,10 @@ private fun Double?.formatMetric(metric: ChartMetric): String {
         else -> "%.2f".format(this)
     }
     return "$value ${metric.unit}"
+}
+
+private fun Double.formatAxis(metric: ChartMetric): String = when (metric) {
+    ChartMetric.PRESSURE -> "%.3f".format(this)
+    ChartMetric.TORQUE -> if (abs(this) >= 100.0) "%.0f".format(this) else "%.1f".format(this)
+    ChartMetric.FORCE -> if (abs(this) >= 100.0) "%.0f".format(this) else "%.1f".format(this)
 }

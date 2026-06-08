@@ -158,7 +158,12 @@ fun BigScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(outerPadding),
+                .padding(
+                    start = outerPadding,
+                    top = outerPadding,
+                    end = outerPadding,
+                    bottom = outerPadding + if (compact) 12.dp else 8.dp,
+                ),
             verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             HeaderBar(state, compact = compact)
@@ -437,7 +442,7 @@ private fun HeaderBar(state: MeasurementState, compact: Boolean) {
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "WiFi 扭矩扳手顶升现场大屏",
+                    "WiFi 扭矩扳手顶升现场工作台",
                     color = AppColors.textPrimary,
                     fontSize = if (compact) 21.sp else 27.sp,
                     fontWeight = FontWeight.Bold,
@@ -677,7 +682,7 @@ fun ScrollColumn(content: @Composable () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(14.dp),
+            .padding(start = 14.dp, top = 14.dp, end = 14.dp, bottom = 30.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         content = { content() },
     )
@@ -747,7 +752,7 @@ internal fun functionLabel(functionCode: Int): String = when (functionCode) {
 }
 
 @Preview(
-    name = "App3 现场大屏",
+    name = "App3 现场工作台",
     widthDp = 1500,
     heightDp = 900,
     showBackground = true,
@@ -790,7 +795,7 @@ private fun BigScreenPreview() {
                     slabNo = "FZB-018",
                     pointNo = "P03",
                     operatorName = "现场班组",
-                    deviceSn = "APP3-MOCK",
+                    deviceSn = "APP3-PREVIEW",
                 ),
                 currentBoltNo = 3,
                 currentTorqueNm = points.last().sourcePoint.torqueNm,

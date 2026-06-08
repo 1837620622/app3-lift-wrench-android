@@ -14,6 +14,9 @@ App3Android/.idea/
 
 # Field captures and raw debug logs are kept local.
 调试报告/protocol_logs/
+调试报告/ui_screenshots/
+调试报告/android_logs/
+调试报告/android_screenshots/
 
 # Deprecated desktop project is not part of the Android mainline.
 顶升扳手采集软件（作废）/

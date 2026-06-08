@@ -2,6 +2,7 @@ package com.chuankangkk.wrenchlift.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,11 +48,13 @@ fun FocusedChartScreen(
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         val narrow = maxWidth < 760.dp
-        val short = maxHeight < 390.dp
+        val short = maxHeight < 430.dp
         val gap = if (short) 8.dp else 12.dp
 
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = if (short) 12.dp else 8.dp),
             verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             FocusHeader(
@@ -60,40 +63,23 @@ fun FocusedChartScreen(
                 onBack = onBack,
                 compact = short,
             )
-            ChartMetricSelector(
-                selected = selectedMetric,
-                onSelected = onMetricSelected,
-                compact = short,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            if (!narrow) {
-                Row(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(gap),
-                ) {
-                    EngineeringTrendChart(
-                        points = state.recentPoints,
-                        metric = selectedMetric,
-                        emphasized = true,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                    )
-                    FocusMetricRail(
-                        state = state,
-                        selectedMetric = selectedMetric,
-                        compact = short,
-                        modifier = Modifier.width(if (short) 240.dp else 280.dp).fillMaxHeight(),
-                    )
-                }
-            } else {
-                EngineeringTrendChart(
-                    points = state.recentPoints,
-                    metric = selectedMetric,
-                    emphasized = true,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+            FocusMetricStrip(state = state)
+            if (!short) {
+                ChartMetricSelector(
+                    selected = selectedMetric,
+                    onSelected = onMetricSelected,
+                    compact = false,
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                FocusMetricStrip(state = state)
             }
+            FocusedCurveWall(
+                state = state,
+                primaryMetric = selectedMetric,
+                onMetricSelected = onMetricSelected,
+                compact = short,
+                narrow = narrow,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
 
             FocusActionBar(
                 state = state,
@@ -101,6 +87,111 @@ fun FocusedChartScreen(
                 onSave = onSave,
                 onConfirmEffectivePoint = onConfirmEffectivePoint,
                 compact = short,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FocusedCurveWall(
+    state: MeasurementState,
+    primaryMetric: ChartMetric,
+    onMetricSelected: (ChartMetric) -> Unit,
+    compact: Boolean,
+    narrow: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val gap = if (compact) 8.dp else 12.dp
+    val secondaryMetrics = ChartMetric.entries.filter { it != primaryMetric }
+
+    if (narrow) {
+        Column(
+            modifier = modifier,
+            verticalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            EngineeringTrendChart(
+                points = state.recentPoints,
+                metric = primaryMetric,
+                emphasized = true,
+                modifier = Modifier.weight(1.35f).fillMaxWidth(),
+            )
+            secondaryMetrics.forEach { metric ->
+                EngineeringTrendChart(
+                    points = state.recentPoints,
+                    metric = metric,
+                    emphasized = false,
+                    onClick = { onMetricSelected(metric) },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            }
+        }
+    } else {
+        Row(
+            modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            EngineeringTrendChart(
+                points = state.recentPoints,
+                metric = primaryMetric,
+                emphasized = true,
+                modifier = Modifier.weight(1.75f).fillMaxHeight(),
+            )
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                verticalArrangement = Arrangement.spacedBy(gap),
+            ) {
+                secondaryMetrics.forEach { metric ->
+                    EngineeringTrendChart(
+                        points = state.recentPoints,
+                        metric = metric,
+                        emphasized = false,
+                        onClick = { onMetricSelected(metric) },
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                }
+                if (!compact) {
+                    FocusCurveStatusCard(
+                        state = state,
+                        modifier = Modifier.weight(0.82f).fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FocusCurveStatusCard(state: MeasurementState, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(AppColors.panel, RoundedCornerShape(6.dp))
+            .padding(14.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                "现场判断",
+                color = AppColors.textSecondary,
+                fontSize = 12.sp,
+                maxLines = 1,
+            )
+            Text(
+                "${state.warningLevel.labelText()} · ${state.fieldTrend().label}",
+                color = state.warningLevel.color(),
+                fontSize = 23.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                state.warningMessage,
+                color = AppColors.textSecondary,
+                fontSize = 13.sp,
+                lineHeight = 17.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -128,7 +219,7 @@ private fun FocusHeader(
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = selectedMetric.label,
+                text = "曲线大屏 · ${selectedMetric.label}",
                 color = AppColors.textPrimary,
                 fontSize = if (compact) 21.sp else 27.sp,
                 fontWeight = FontWeight.Bold,

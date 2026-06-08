@@ -15,10 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,11 +32,8 @@ fun RealtimeDashboard(
     onOpenChart: (ChartMetric) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selectedMetricIndex by rememberSaveable { mutableIntStateOf(ChartMetric.FORCE.ordinal) }
-    val selectedMetric = ChartMetric.entries[selectedMetricIndex]
     SurfacePanel(modifier = modifier) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val dashboardWidth = maxWidth
             val compact = maxHeight < 470.dp || maxWidth < 760.dp
             val padding = if (compact) 10.dp else 16.dp
             val gap = if (compact) 8.dp else 12.dp
@@ -48,45 +41,10 @@ fun RealtimeDashboard(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 verticalArrangement = Arrangement.spacedBy(gap),
             ) {
-                if (dashboardWidth < 590.dp) {
-                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        ChartMetricSelector(
-                            selected = selectedMetric,
-                            onSelected = { selectedMetricIndex = it.ordinal },
-                            compact = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        ActionButton(
-                            label = "放大曲线",
-                            onClick = { onOpenChart(selectedMetric) },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = AppColors.info,
-                        )
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        ChartMetricSelector(
-                            selected = selectedMetric,
-                            onSelected = { selectedMetricIndex = it.ordinal },
-                            compact = compact,
-                            modifier = Modifier.weight(1f),
-                        )
-                        ActionButton(
-                            label = "放大曲线",
-                            onClick = { onOpenChart(selectedMetric) },
-                            modifier = Modifier.width(if (compact) 112.dp else 132.dp),
-                            color = AppColors.info,
-                        )
-                    }
-                }
-                EngineeringTrendChart(
-                    points = state.recentPoints,
-                    metric = selectedMetric,
-                    onClick = { onOpenChart(selectedMetric) },
+                WorkbenchHero(
+                    state = state,
+                    onOpenChart = onOpenChart,
+                    compact = compact,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
                 ReadoutBand(state = state, compact = compact)
@@ -99,6 +57,226 @@ fun RealtimeDashboard(
                 StatusLine(state = state, compact = compact)
             }
         }
+    }
+}
+
+@Composable
+private fun WorkbenchHero(
+    state: MeasurementState,
+    onOpenChart: (ChartMetric) -> Unit,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = AppColors.panelInset,
+        shape = RoundedCornerShape(8.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.grid.copy(alpha = 0.48f)),
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(if (compact) 12.dp else 18.dp)) {
+            val narrow = maxWidth < 620.dp
+            val trend = state.fieldTrend()
+            val forceText = state.currentForceKn?.let { "%.2f".format(it) } ?: "--"
+            val forceCaption = if (state.currentForceKn == null) {
+                "未标定，不输出正式顶升力"
+            } else {
+                "${state.warningLevel.labelText()} · ${trend.label}"
+            }
+            if (narrow) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    WorkbenchPrimaryReadout(
+                        value = forceText,
+                        caption = forceCaption,
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    WorkbenchCurveActions(
+                        state = state,
+                        onOpenChart = onOpenChart,
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    WorkbenchPrimaryReadout(
+                        value = forceText,
+                        caption = forceCaption,
+                        compact = compact,
+                        modifier = Modifier.weight(1.25f).fillMaxWidth(),
+                    )
+                    WorkbenchCurveActions(
+                        state = state,
+                        onOpenChart = onOpenChart,
+                        compact = compact,
+                        modifier = Modifier.weight(0.85f).fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkbenchPrimaryReadout(
+    value: String,
+    caption: String,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
+    ) {
+        Text(
+            "现场主读数",
+            color = AppColors.textSecondary,
+            fontSize = if (compact) 13.sp else 15.sp,
+            maxLines = 1,
+        )
+        Text(
+            "顶升力",
+            color = AppColors.textPrimary,
+            fontSize = if (compact) 24.sp else 34.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                value,
+                color = AppColors.warning,
+                fontSize = if (compact) 54.sp else 80.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Text(
+                "kN",
+                color = AppColors.textSecondary,
+                fontSize = if (compact) 16.sp else 22.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 6.dp, bottom = if (compact) 10.dp else 16.dp),
+            )
+        }
+        Text(
+            caption,
+            color = AppColors.textSecondary,
+            fontSize = if (compact) 13.sp else 16.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun WorkbenchCurveActions(
+    state: MeasurementState,
+    onOpenChart: (ChartMetric) -> Unit,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
+    ) {
+        ActionButton(
+            label = "进入曲线大屏",
+            onClick = { onOpenChart(ChartMetric.FORCE) },
+            modifier = Modifier.fillMaxWidth(),
+            color = AppColors.info,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            SecondaryButton(
+                label = "扭矩曲线",
+                onClick = { onOpenChart(ChartMetric.TORQUE) },
+                modifier = Modifier.weight(1f),
+            )
+            SecondaryButton(
+                label = "压力曲线",
+                onClick = { onOpenChart(ChartMetric.PRESSURE) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (!compact) {
+            Text(
+                "主界面只做现场读数；全部曲线在独立页面查看。",
+                color = AppColors.textSecondary,
+                fontSize = 13.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        WorkbenchHealthRow(state = state, compact = compact)
+    }
+}
+
+@Composable
+private fun WorkbenchHealthRow(state: MeasurementState, compact: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            WorkbenchHealthChip(
+                label = "连接",
+                value = state.connectionState.label,
+                color = if (state.connectionState.isOnline) AppColors.running else AppColors.info,
+                modifier = Modifier.weight(1f),
+            )
+            WorkbenchHealthChip(
+                label = "帧数",
+                value = "${state.receivedFrameCount}",
+                color = AppColors.teal,
+                modifier = Modifier.weight(1f),
+            )
+            if (!compact) {
+                WorkbenchHealthChip(
+                    label = "点数",
+                    value = "${state.recentPoints.size}",
+                    color = AppColors.amber,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        if (!compact) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                WorkbenchHealthChip(
+                    label = "设备",
+                    value = state.deviceSn.ifBlank { "--" },
+                    color = AppColors.info,
+                    modifier = Modifier.weight(1f),
+                )
+                WorkbenchHealthChip(
+                    label = "地址",
+                    value = "${state.host}:${state.port}",
+                    color = AppColors.signal,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkbenchHealthChip(
+    label: String,
+    value: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .background(color.copy(alpha = 0.10f), RoundedCornerShape(7.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(label, color = AppColors.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -344,7 +522,7 @@ fun WarningLevel.labelText(): String = when (this) {
     WarningLevel.ERROR -> "危险"
 }
 
-private fun MeasurementState.fieldTrend(): TrendSummary {
+fun MeasurementState.fieldTrend(): TrendSummary {
     val forceValues = recentPoints.mapNotNull { point ->
         point.forceKn?.takeIf { it.isFinite() }?.let { point.sourcePoint.angleDeg to it }
     }
