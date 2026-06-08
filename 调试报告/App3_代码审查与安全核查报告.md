@@ -47,11 +47,27 @@ CodeRabbit raised 2 issues，均为 minor：
 已确认：
 
 - 仓库未归档、未禁用。
+- 仓库已按用户要求从私有改为公开：`https://github.com/1837620622/app3-lift-wrench-android`。
 - Actions 权限开启，`allowed_actions=all`。
 - 6 月账单 API 未显示 Actions 净欠费，`netAmount=0`。
 - Android CI 和最小 `Actions Smoke` 都在创建 job 前 `startup_failure`。
 
-结论：当前不是 Gradle 或 Android workflow 脚本失败，而是 GitHub 账号、预算、支付方式、额度或 GitHub runner 启动层问题。账号恢复后先运行 `Actions Smoke`，再运行 `Android CI`。
+公开后重新手动触发：
+
+```text
+Actions Smoke: https://github.com/1837620622/app3-lift-wrench-android/actions/runs/27125690625
+Android CI:    https://github.com/1837620622/app3-lift-wrench-android/actions/runs/27125692453
+```
+
+现象：
+
+```text
+job 已创建，但 runner_id=0，runner_name 为空，steps 为空，log not found
+```
+
+结论：当前不是 Gradle 或 Android workflow 脚本失败，而是 GitHub 账号、组织策略、runner 分配、支付/额度或 GitHub runner 启动层问题。账号恢复后先运行 `Actions Smoke`，通过后再运行 `Android CI`。
+
+已补充 Android CI artifact 上传步骤；runner 恢复后，CI 会执行单元测试、lint、debug APK 构建，并上传 `app3-wrench-lift-debug-apk`。
 
 ## Android lint
 

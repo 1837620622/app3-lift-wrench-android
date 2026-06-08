@@ -30,5 +30,15 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --console=plain -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
 
+      - name: Android lint
+        run: ./gradlew lintDebug --console=plain -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
+
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --console=plain -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app3-wrench-lift-debug-apk
+          path: ${{ runner.temp }}/app3-android-build/app/outputs/apk/debug/*.apk
+          if-no-files-found: error
