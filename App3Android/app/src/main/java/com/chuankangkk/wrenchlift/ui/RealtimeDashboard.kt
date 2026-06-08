@@ -152,11 +152,11 @@ private fun WorkbenchPrimaryReadout(
             Text(
                 value,
                 color = AppColors.warning,
-                fontSize = if (compact) 54.sp else 80.sp,
+                fontSize = if (compact) 50.sp else 80.sp,
                 fontWeight = FontWeight.Black,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(1f),
             )
             Text(
                 "kN",
@@ -214,7 +214,9 @@ private fun WorkbenchCurveActions(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        WorkbenchHealthRow(state = state, compact = compact)
+        if (!compact) {
+            WorkbenchHealthRow(state = state, compact = false)
+        }
     }
 }
 
@@ -467,7 +469,7 @@ private fun MetricTile(
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(1f),
             )
             Text(
                 text = unit,

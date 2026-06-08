@@ -703,6 +703,9 @@ object AppColors {
     val warning = Color(0xFFE3AD44)
     val danger = Color(0xFFE06A6A)
     val info = Color(0xFF6FA6C8)
+    val torqueCurve = Color(0xFF9BD4FF)
+    val forceCurve = warning
+    val pressureCurve = Color(0xFF74D7C8)
     val teal = running
     val blue = info
     val amber = warning

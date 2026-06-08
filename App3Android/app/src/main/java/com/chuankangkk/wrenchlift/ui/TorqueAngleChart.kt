@@ -61,9 +61,9 @@ fun EngineeringTrendChart(
     val latestWarning = points.lastOrNull()?.warningLevel ?: WarningLevel.NORMAL
     val color = when {
         metric == ChartMetric.FORCE && latestWarning != WarningLevel.NORMAL -> latestWarning.color()
-        metric == ChartMetric.FORCE -> AppColors.warning
-        metric == ChartMetric.PRESSURE -> AppColors.info
-        else -> AppColors.signal
+        metric == ChartMetric.FORCE -> AppColors.forceCurve
+        metric == ChartMetric.PRESSURE -> AppColors.pressureCurve
+        else -> AppColors.torqueCurve
     }
     val trend = analyzeTrend(values)
     val scale = values.chartScale()
@@ -93,6 +93,7 @@ fun EngineeringTrendChart(
         }
         val metaSize = if (emphasized) 13.sp else 11.sp
         val axisSize = if (emphasized) 12.sp else 10.sp
+        val showAxisCaption = emphasized || maxWidth > 260.dp
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             if (size.width <= 48f || size.height <= 48f) return@Canvas
@@ -221,6 +222,7 @@ fun EngineeringTrendChart(
                 fontSize = valueSize,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
@@ -284,13 +286,15 @@ fun EngineeringTrendChart(
                 color = AppColors.textSecondary,
                 fontSize = if (emphasized) 13.sp else 11.sp,
             )
-            Text(
-                text = "转角 ° · ${metric.unit}",
-                color = AppColors.textSecondary,
-                fontSize = if (emphasized) 13.sp else 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (showAxisCaption) {
+                Text(
+                    text = "转角 ° · ${metric.unit}",
+                    color = AppColors.textSecondary,
+                    fontSize = if (emphasized) 13.sp else 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
                 values.lastOrNull()?.first?.let { "%.0f°".format(it) } ?: "--°",
                 color = AppColors.textSecondary,

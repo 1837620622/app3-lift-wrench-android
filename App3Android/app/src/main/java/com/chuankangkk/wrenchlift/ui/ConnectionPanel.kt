@@ -179,9 +179,9 @@ fun ConnectionPanel(
         SidebarGroup("五 设备状态") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 SecondaryButton("检查连接", onHeartbeat, Modifier.weight(1f))
-                SecondaryButton("确认规则", onResultAck, Modifier.weight(1f))
+                SecondaryButton("确认结果", onResultAck, Modifier.weight(1f))
             }
-            SecondaryButton("对时规则", onTimeSync, Modifier.fillMaxWidth())
+            SecondaryButton("校准时间", onTimeSync, Modifier.fillMaxWidth())
             InfoLine("当前 Wi-Fi", state.currentWifiName)
             InfoLine("本机 IP", state.localIp)
             InfoLine("默认网关", state.gatewayIp)

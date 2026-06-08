@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -28,7 +27,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
-import com.chuankangkk.wrenchlift.measurement.WarningLevel
 
 @Composable
 fun FocusedChartScreen(
@@ -62,8 +60,9 @@ fun FocusedChartScreen(
                 selectedMetric = selectedMetric,
                 onBack = onBack,
                 compact = short,
+                showStatusChips = !narrow,
             )
-            FocusMetricStrip(state = state)
+            FocusMetricStrip(state = state, compact = short)
             if (!short) {
                 ChartMetricSelector(
                     selected = selectedMetric,
@@ -203,6 +202,7 @@ private fun FocusHeader(
     selectedMetric: ChartMetric,
     onBack: () -> Unit,
     compact: Boolean,
+    showStatusChips: Boolean,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -236,14 +236,16 @@ private fun FocusHeader(
                 )
             }
         }
-        StatusChip(
-            label = state.connectionState.label,
-            color = if (state.connectionState.isOnline) AppColors.running else AppColors.info,
-        )
-        StatusChip(
-            label = state.warningLevel.labelText(),
-            color = state.warningLevel.color(),
-        )
+        if (showStatusChips) {
+            StatusChip(
+                label = state.connectionState.label,
+                color = if (state.connectionState.isOnline) AppColors.running else AppColors.info,
+            )
+            StatusChip(
+                label = state.warningLevel.labelText(),
+                color = state.warningLevel.color(),
+            )
+        }
     }
 }
 
@@ -273,6 +275,8 @@ fun ChartMetricSelector(
                     text = metric.label.substringBefore("-"),
                     fontSize = if (compact) 13.sp else 15.sp,
                     fontWeight = if (checked) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -280,128 +284,45 @@ fun ChartMetricSelector(
 }
 
 @Composable
-private fun FocusMetricRail(
-    state: MeasurementState,
-    selectedMetric: ChartMetric,
-    compact: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .background(AppColors.panel, RoundedCornerShape(6.dp))
-            .padding(if (compact) 12.dp else 16.dp),
-        verticalArrangement = Arrangement.SpaceBetween,
-    ) {
-        FocusPrimaryMetric(state, selectedMetric, compact)
-        FocusRailValue("扭矩", "%.1f".format(state.currentTorqueNm), "Nm", selectedMetric == ChartMetric.TORQUE, compact)
-        FocusRailValue("转角", "%.1f".format(state.currentAngleDeg), "°", false, compact)
-        FocusRailValue("顶升力", state.currentForceKn?.let { "%.2f".format(it) } ?: "--", "kN", selectedMetric == ChartMetric.FORCE, compact)
-        FocusRailValue("压力", state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--", "MPa", selectedMetric == ChartMetric.PRESSURE, compact)
-        FocusRailValue("位移", state.displacementText(), "mm", false, compact)
-    }
-}
-
-@Composable
-private fun FocusPrimaryMetric(state: MeasurementState, selectedMetric: ChartMetric, compact: Boolean) {
-    val value = when (selectedMetric) {
-        ChartMetric.TORQUE -> "%.1f".format(state.currentTorqueNm)
-        ChartMetric.FORCE -> state.currentForceKn?.let { "%.2f".format(it) } ?: "--"
-        ChartMetric.PRESSURE -> state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--"
-    }
-    val color = when {
-        selectedMetric == ChartMetric.FORCE && state.warningLevel != WarningLevel.NORMAL -> state.warningLevel.color()
-        selectedMetric == ChartMetric.FORCE -> AppColors.warning
-        selectedMetric == ChartMetric.PRESSURE -> AppColors.info
-        else -> AppColors.signal
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text("当前值", color = AppColors.textSecondary, fontSize = 12.sp)
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                value,
-                color = color,
-                fontSize = if (compact) 38.sp else 52.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-            )
-            Text(
-                selectedMetric.unit,
-                color = AppColors.textSecondary,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(start = 5.dp, bottom = 7.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun FocusRailValue(
-    label: String,
-    value: String,
-    unit: String,
-    highlighted: Boolean,
-    compact: Boolean,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        Text(label, color = AppColors.textSecondary, fontSize = if (compact) 12.sp else 13.sp)
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                value,
-                color = if (highlighted) AppColors.textPrimary else AppColors.signal,
-                fontSize = if (compact) 19.sp else 23.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                unit,
-                color = AppColors.textSecondary,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(start = 3.dp, bottom = 2.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun FocusMetricStrip(state: MeasurementState) {
+private fun FocusMetricStrip(state: MeasurementState, compact: Boolean) {
     BoxWithConstraints(
-        modifier = Modifier.fillMaxWidth().background(AppColors.panel, RoundedCornerShape(6.dp)).padding(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(AppColors.panel, RoundedCornerShape(6.dp))
+            .padding(if (compact) 6.dp else 8.dp),
     ) {
         if (maxWidth < 560.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FocusStripValue("扭矩", "%.1f".format(state.currentTorqueNm), "Nm", Modifier.weight(1f))
-                    FocusStripValue("转角", "%.1f".format(state.currentAngleDeg), "°", Modifier.weight(1f))
-                    FocusStripValue("顶升力", state.currentForceKn?.let { "%.2f".format(it) } ?: "--", "kN", Modifier.weight(1f))
+                    FocusStripValue("扭矩", "%.1f".format(state.currentTorqueNm), "Nm", compact, Modifier.weight(1f))
+                    FocusStripValue("转角", "%.1f".format(state.currentAngleDeg), "°", compact, Modifier.weight(1f))
+                    FocusStripValue("顶升力", state.currentForceKn?.let { "%.2f".format(it) } ?: "--", "kN", compact, Modifier.weight(1f))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FocusStripValue("压力", state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--", "MPa", Modifier.weight(1f))
-                    FocusStripValue("位移", state.displacementText(), "mm", Modifier.weight(1f))
+                    FocusStripValue("压力", state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--", "MPa", compact, Modifier.weight(1f))
+                    FocusStripValue("位移", state.displacementText(), "mm", compact, Modifier.weight(1f))
                 }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FocusStripValue("扭矩", "%.1f".format(state.currentTorqueNm), "Nm", Modifier.weight(1f))
-                FocusStripValue("转角", "%.1f".format(state.currentAngleDeg), "°", Modifier.weight(1f))
-                FocusStripValue("顶升力", state.currentForceKn?.let { "%.2f".format(it) } ?: "--", "kN", Modifier.weight(1f))
-                FocusStripValue("压力", state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--", "MPa", Modifier.weight(1f))
-                FocusStripValue("位移", state.displacementText(), "mm", Modifier.weight(1f))
+                FocusStripValue("扭矩", "%.1f".format(state.currentTorqueNm), "Nm", compact, Modifier.weight(1f))
+                FocusStripValue("转角", "%.1f".format(state.currentAngleDeg), "°", compact, Modifier.weight(1f))
+                FocusStripValue("顶升力", state.currentForceKn?.let { "%.2f".format(it) } ?: "--", "kN", compact, Modifier.weight(1f))
+                FocusStripValue("压力", state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--", "MPa", compact, Modifier.weight(1f))
+                FocusStripValue("位移", state.displacementText(), "mm", compact, Modifier.weight(1f))
             }
         }
     }
 }
 
 @Composable
-private fun FocusStripValue(label: String, value: String, unit: String, modifier: Modifier = Modifier) {
+private fun FocusStripValue(label: String, value: String, unit: String, compact: Boolean, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
         Text(label, color = AppColors.textSecondary, fontSize = 11.sp)
         Text(
             "$value $unit",
             color = AppColors.textPrimary,
-            fontSize = 16.sp,
+            fontSize = if (compact) 14.sp else 16.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
