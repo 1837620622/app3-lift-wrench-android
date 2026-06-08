@@ -28,13 +28,25 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest --console=plain -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
+        run: >
+          ./gradlew testDebugUnitTest --console=plain
+          --project-cache-dir "$RUNNER_TEMP/app3-android-build/project-cache"
+          -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
+          -Pkotlin.project.persistent.dir="$RUNNER_TEMP/app3-android-build/kotlin-project-data"
 
       - name: Android lint
-        run: ./gradlew lintDebug --console=plain -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
+        run: >
+          ./gradlew lintDebug --console=plain
+          --project-cache-dir "$RUNNER_TEMP/app3-android-build/project-cache"
+          -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
+          -Pkotlin.project.persistent.dir="$RUNNER_TEMP/app3-android-build/kotlin-project-data"
 
       - name: Assemble debug APK
-        run: ./gradlew assembleDebug --console=plain -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
+        run: >
+          ./gradlew assembleDebug --console=plain
+          --project-cache-dir "$RUNNER_TEMP/app3-android-build/project-cache"
+          -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
+          -Pkotlin.project.persistent.dir="$RUNNER_TEMP/app3-android-build/kotlin-project-data"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
