@@ -26,6 +26,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
 
+private val pointMapPositions = listOf(
+    0.22f to 0.24f,
+    0.50f to 0.22f,
+    0.78f to 0.24f,
+    0.22f to 0.50f,
+    0.78f to 0.50f,
+    0.22f to 0.76f,
+    0.50f to 0.78f,
+    0.78f to 0.76f,
+)
+
 @Composable
 fun PointMapScreen(state: MeasurementState) {
     Column(
@@ -61,17 +72,18 @@ fun PointMapScreen(state: MeasurementState) {
                     cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
                     style = Stroke(1.4.dp.toPx()),
                 )
-                val positions = listOf(
-                    0.22f to 0.24f,
-                    0.50f to 0.22f,
-                    0.78f to 0.24f,
-                    0.22f to 0.50f,
-                    0.78f to 0.50f,
-                    0.22f to 0.76f,
-                    0.50f to 0.78f,
-                    0.78f to 0.76f,
-                )
-                positions.forEachIndexed { index, position ->
+                val normalLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = AppColors.textPrimary.toArgb()
+                    textSize = 10.5.dp.toPx()
+                    textAlign = Paint.Align.CENTER
+                }
+                val currentLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = AppColors.textPrimary.toArgb()
+                    textSize = 13.dp.toPx()
+                    textAlign = Paint.Align.CENTER
+                    isFakeBoldText = true
+                }
+                pointMapPositions.forEachIndexed { index, position ->
                     val pointLabel = "P%02d".format(index + 1)
                     val isCurrent = pointLabel == state.session.pointNo.uppercase()
                     val center = Offset(
@@ -93,12 +105,7 @@ fun PointMapScreen(state: MeasurementState) {
                         pointLabel,
                         center.x,
                         center.y + 4.dp.toPx(),
-                        Paint().apply {
-                            color = AppColors.textPrimary.toArgb()
-                            textSize = if (isCurrent) 13.dp.toPx() else 10.5.dp.toPx()
-                            textAlign = Paint.Align.CENTER
-                            isFakeBoldText = isCurrent
-                        },
+                        if (isCurrent) currentLabelPaint else normalLabelPaint,
                     )
                 }
             }

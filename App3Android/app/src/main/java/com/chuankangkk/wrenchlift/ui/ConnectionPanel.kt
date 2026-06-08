@@ -23,6 +23,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chuankangkk.wrenchlift.connection.ConnectionState
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
 
 @Composable
@@ -47,6 +48,7 @@ fun ConnectionPanel(
 ) {
     var pendingDangerAction by remember { mutableStateOf<DangerAction?>(null) }
     val controlsEnabled = state.connectionState.isOnline
+    val isConnecting = state.connectionState is ConnectionState.Connecting
     pendingDangerAction?.let { action ->
         AlertDialog(
             onDismissRequest = { pendingDangerAction = null },
@@ -85,10 +87,15 @@ fun ConnectionPanel(
 
         SidebarGroup("一 连接扳手") {
             ActionButton(
-                if (controlsEnabled) "重新连接" else "连接扳手",
+                when {
+                    isConnecting -> "连接中"
+                    controlsEnabled -> "重新连接"
+                    else -> "连接扳手"
+                },
                 onConnect,
                 Modifier.fillMaxWidth(),
                 if (controlsEnabled) AppColors.info else AppColors.running,
+                enabled = !isConnecting,
             )
             SecondaryButton("断开连接", onDisconnect, Modifier.fillMaxWidth(), enabled = controlsEnabled)
         }
