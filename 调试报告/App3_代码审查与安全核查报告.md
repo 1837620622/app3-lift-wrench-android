@@ -104,6 +104,7 @@ ACCESS_FINE_LOCATION 必须同时声明 ACCESS_COARSE_LOCATION
 - 补 `ACCESS_COARSE_LOCATION`。
 - `NEARBY_WIFI_DEVICES` 增加 `android:usesPermissionFlags="neverForLocation"`。
 - 关闭 `android:allowBackup`，避免现场数据库和原始 HEX 被系统自动备份。
+- 增加 Android 12+ `dataExtractionRules` 和旧版 `fullBackupContent`，禁止云备份和设备迁移备份现场数据。
 
 剩余 lint warning：
 
@@ -122,6 +123,8 @@ ACCESS_FINE_LOCATION 必须同时声明 ACCESS_COARSE_LOCATION
 - Wi-Fi 设备权限：标记不用于定位，降低权限解释风险。
 - 正式模拟入口：主源码未发现 `Fake`、`Simulation`、`模拟采集`、`startSimulation`、`stopSimulation`。
 - 设计预览：Compose Preview 中设备编号从 `APP3-MOCK` 改为 `APP3-PREVIEW`，避免误解为正式数据源。
+- TCP 心跳在断线后停止，避免后台协程继续发送导致异常。
+- 最终结果帧先保存再记录确认发送状态，确认失败不会丢失现场结果。
 
 ### 已确认
 

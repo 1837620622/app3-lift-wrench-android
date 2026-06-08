@@ -284,9 +284,15 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
             WrenchPacket.FUNC_TORQUE_ANGLE -> handleTorqueAngle(packet, now)
             WrenchPacket.FUNC_RESULT -> handleResult(packet, now)
             WrenchPacket.FUNC_TIME_REQUEST -> {
-                connection.send(WrenchPacketBuilder.timeSync())
-                _state.update { it.copy(lastProtocolSummary = "扳手请求校时，已自动回复") }
-                appendLog("扳手请求时间校准，已自动回复")
+                runCatching {
+                    connection.send(WrenchPacketBuilder.timeSync())
+                }.onSuccess {
+                    _state.update { it.copy(lastProtocolSummary = "扳手请求校时，已自动回复") }
+                    appendLog("扳手请求时间校准，已自动回复")
+                }.onFailure { throwable ->
+                    _state.update { it.copy(lastProtocolSummary = "扳手请求校时，回复失败") }
+                    appendLog("扳手请求时间校准，回复失败：${throwable.message ?: "未知错误"}")
+                }
             }
             WrenchPacket.FUNC_REPLY_SN -> {
                 val sn = DeviceSnDecoder.decode(packet)
@@ -395,7 +401,9 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
 
     private suspend fun handleResult(packet: WrenchPacket, now: Long) {
         val result = ResultFrameDecoder.decode(packet)
-        connection.send(WrenchPacketBuilder.resultAck())
+        val ackResult = runCatching {
+            connection.send(WrenchPacketBuilder.resultAck())
+        }
         val activeSessionId = sessionId ?: ensureSession(connectionMode)
         recordResultMeasurementPoint(
             activeSessionId = activeSessionId,
@@ -419,10 +427,15 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
             )
         }
         persistSessionSummary(activeSessionId, result.status.label, result, pulseResult = null)
+        val ackText = if (ackResult.isSuccess) {
+            "已自动确认"
+        } else {
+            "确认发送失败：${ackResult.exceptionOrNull()?.message ?: "未知错误"}"
+        }
         appendLog(
             "收到最终结果：${result.status.label}；目标/实际扭矩 " +
                 "${result.targetTorqueNm.formatLog()}/${result.actualTorqueNm.formatLog()} Nm；" +
-                "目标/实际角度 ${result.targetAngleDeg.formatLog()}/${result.actualAngleDeg.formatLog()}°；已自动确认",
+                "目标/实际角度 ${result.targetAngleDeg.formatLog()}/${result.actualAngleDeg.formatLog()}°；$ackText",
         )
     }
 

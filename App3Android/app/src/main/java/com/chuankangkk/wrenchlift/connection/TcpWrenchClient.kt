@@ -71,8 +71,8 @@ class TcpWrenchClient(
     }
 
     override suspend fun send(packet: WrenchPacket) {
-        val activeSocket = socket ?: error("TCP 未连接")
         sendMutex.withLock {
+            val activeSocket = socket ?: throw IllegalStateException("TCP 未连接")
             withContext(Dispatchers.IO) {
                 activeSocket.getOutputStream().apply {
                     write(packet.toFrame())
@@ -104,6 +104,7 @@ class TcpWrenchClient(
                 }
             } finally {
                 closeSocketQuietly()
+                heartbeatJob?.cancel()
             }
         }
     }
@@ -112,7 +113,15 @@ class TcpWrenchClient(
         heartbeatJob = scope.launch {
             while (true) {
                 delay(heartbeatIntervalMillis)
-                send(WrenchPacketBuilder.heartbeat())
+                val failure = runCatching {
+                    send(WrenchPacketBuilder.heartbeat())
+                }.exceptionOrNull()
+                if (failure != null) {
+                    if (socket != null) {
+                        _connectionState.value = ConnectionState.Error(failure.message ?: "TCP 心跳失败")
+                    }
+                    break
+                }
             }
         }
     }
