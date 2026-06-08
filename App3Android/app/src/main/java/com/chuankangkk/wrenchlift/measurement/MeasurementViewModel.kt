@@ -143,11 +143,11 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun sendResultAck() {
-        appendLog("结果确认会在扳手回传最终结果后自动处理，不能手动乱发")
+        appendLog("结果确认会在扳手回传最终结果后自动发送，当前无需手动发送")
     }
 
     fun sendTimeSync() {
-        appendLog("时间校准会在扳手主动请求时自动回复，不能手动乱发")
+        appendLog("时间校准会在扳手主动请求时自动回复，当前无需手动发送")
     }
 
     fun saveCurrentRecord() {

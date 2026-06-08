@@ -281,7 +281,7 @@ private fun SidePanelTabs(
         modes.forEach { mode ->
             Button(
                 onClick = { onSelected(mode) },
-                modifier = Modifier.weight(1f).height(40.dp),
+                modifier = Modifier.weight(1f).height(48.dp),
                 shape = RoundedCornerShape(6.dp),
                 contentPadding = PaddingValues(horizontal = 4.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -667,7 +667,7 @@ fun SecondaryButton(
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(46.dp),
+        modifier = modifier.height(48.dp),
         shape = RoundedCornerShape(7.dp),
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = AppColors.textPrimary),

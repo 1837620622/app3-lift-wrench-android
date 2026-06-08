@@ -211,7 +211,7 @@ private fun FocusHeader(
     ) {
         OutlinedButton(
             onClick = onBack,
-            modifier = Modifier.height(if (compact) 42.dp else 48.dp),
+            modifier = Modifier.height(48.dp),
             shape = RoundedCornerShape(6.dp),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = AppColors.textPrimary),
         ) {
@@ -264,7 +264,7 @@ fun ChartMetricSelector(
             val checked = metric == selected
             Button(
                 onClick = { onSelected(metric) },
-                modifier = Modifier.weight(1f).height(if (compact) 38.dp else 44.dp),
+                modifier = Modifier.weight(1f).height(48.dp),
                 shape = RoundedCornerShape(6.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (checked) AppColors.info else AppColors.panelRaised,
@@ -354,9 +354,16 @@ private fun FocusActionBar(
             onClick = onStopWrench,
             modifier = Modifier.weight(1f),
             color = AppColors.danger,
+            enabled = state.connectionState.isOnline,
         )
         ActionButton("保存记录", onSave, Modifier.weight(1f), AppColors.warning)
-        ActionButton("确认平衡点", onConfirmEffectivePoint, Modifier.weight(1f), AppColors.running)
+        ActionButton(
+            "确认平衡点",
+            onConfirmEffectivePoint,
+            Modifier.weight(1f),
+            AppColors.running,
+            enabled = state.recentPoints.isNotEmpty(),
+        )
         if (!compact) {
             Text(
                 text = state.warningMessage,

@@ -84,8 +84,13 @@ fun ConnectionPanel(
         SidebarStatus(state)
 
         SidebarGroup("一 连接扳手") {
-            ActionButton("连接扳手", onConnect, Modifier.fillMaxWidth(), AppColors.running)
-            SecondaryButton("断开连接", onDisconnect, Modifier.fillMaxWidth())
+            ActionButton(
+                if (controlsEnabled) "重新连接" else "连接扳手",
+                onConnect,
+                Modifier.fillMaxWidth(),
+                if (controlsEnabled) AppColors.info else AppColors.running,
+            )
+            SecondaryButton("断开连接", onDisconnect, Modifier.fillMaxWidth(), enabled = controlsEnabled)
         }
 
         SidebarGroup("二 扳手操作") {
@@ -131,7 +136,13 @@ fun ConnectionPanel(
         SidebarGroup("三 记录与平衡点") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 ActionButton("保存记录", onSave, Modifier.weight(1f), AppColors.warning)
-                ActionButton("确认平衡点", onConfirmEffectivePoint, Modifier.weight(1f), AppColors.running)
+                ActionButton(
+                    "确认平衡点",
+                    onConfirmEffectivePoint,
+                    Modifier.weight(1f),
+                    AppColors.running,
+                    enabled = state.recentPoints.isNotEmpty(),
+                )
             }
             Text(
                 text = state.saveStatus,
@@ -179,9 +190,9 @@ fun ConnectionPanel(
         SidebarGroup("五 设备状态") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 SecondaryButton("检查连接", onHeartbeat, Modifier.weight(1f))
-                SecondaryButton("确认结果", onResultAck, Modifier.weight(1f))
+                SecondaryButton("结果自动确认", onResultAck, Modifier.weight(1f))
             }
-            SecondaryButton("校准时间", onTimeSync, Modifier.fillMaxWidth())
+            SecondaryButton("自动校准时间", onTimeSync, Modifier.fillMaxWidth())
             InfoLine("当前 Wi-Fi", state.currentWifiName)
             InfoLine("本机 IP", state.localIp)
             InfoLine("默认网关", state.gatewayIp)

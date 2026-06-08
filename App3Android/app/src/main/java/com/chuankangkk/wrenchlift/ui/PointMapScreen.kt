@@ -1,5 +1,6 @@
 package com.chuankangkk.wrenchlift.ui
 
+import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +19,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,6 +88,17 @@ fun PointMapScreen(state: MeasurementState) {
                         radius = if (isCurrent) 19.dp.toPx() else 14.dp.toPx(),
                         center = center,
                         style = Stroke(1.dp.toPx()),
+                    )
+                    drawContext.canvas.nativeCanvas.drawText(
+                        pointLabel,
+                        center.x,
+                        center.y + 4.dp.toPx(),
+                        Paint().apply {
+                            color = AppColors.textPrimary.toArgb()
+                            textSize = if (isCurrent) 13.dp.toPx() else 10.5.dp.toPx()
+                            textAlign = Paint.Align.CENTER
+                            isFakeBoldText = isCurrent
+                        },
                     )
                 }
             }

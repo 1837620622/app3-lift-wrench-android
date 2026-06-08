@@ -179,8 +179,21 @@ private fun EvidenceLine(label: String, value: String) {
 @Composable
 private fun PointValue(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
-        Text(label, color = AppColors.textSecondary, fontSize = 10.sp, maxLines = 1)
-        Text(value, color = AppColors.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(
+            label,
+            color = AppColors.textSecondary,
+            fontSize = 10.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            value,
+            color = AppColors.textPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
