@@ -1,0 +1,24 @@
+.DS_Store
+
+# Android / Gradle local state
+.gradle/
+**/.gradle/
+**/build/
+**/local.properties
+**/*.apk
+**/*.aab
+**/*.iml
+
+# Android Studio local state
+App3Android/.idea/
+
+# Field captures and raw debug logs are kept local.
+调试报告/protocol_logs/
+
+# Deprecated desktop project is not part of the Android mainline.
+顶升扳手采集软件（作废）/
+
+# Do not vendor SDKs or external caches.
+android-sdk/
+AndroidDev/
+node_modules/

@@ -1,0 +1,7 @@
+*.jar binary
+*.pdf binary
+*.docx binary
+*.dwg binary
+*.SLDPRT binary
+*.x_t binary
+*.bat text eol=crlf -diff
