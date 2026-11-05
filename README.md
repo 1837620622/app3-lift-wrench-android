@@ -22,7 +22,7 @@
 
 ## 当前状态
 
-**版本基线 0.3.0（build 29）**（正式工人页；已清旧工程名残留）。最新包：[v0.3.0-build29](https://github.com/1837620622/wifi-wrench-android/releases/tag/v0.3.0-build29)（[Actions build 29](https://github.com/1837620622/wifi-wrench-android/actions/runs/42042130758)）。上一包 [v0.2.0-build27](https://github.com/1837620622/wifi-wrench-android/releases/tag/v0.2.0-build27)。尚未用户视觉验收、尚未真机控制验证。
+**版本基线 0.3.0（build 32）**（正式工人页；启动页/背景已对齐定稿渲染）。最新包：[v0.3.0-build32](https://github.com/1837620622/wifi-wrench-android/releases/tag/v0.3.0-build32)（[Actions build 32](https://github.com/1837620622/wifi-wrench-android/actions/runs/42045524385)）。旧 Release 已清理，只留这一份。尚未用户视觉验收、尚未真机控制验证。
 
 历史基线：功能基线 `b30f0e2` 对应 [Actions build 16](https://github.com/1837620622/wifi-wrench-android/actions/runs/42013640926)。
 
@@ -64,7 +64,7 @@
 
 ## 使用与下载
 
-1. 打开 [v0.3.0-build29](https://github.com/1837620622/wifi-wrench-android/releases/tag/v0.3.0-build29)（或 [Releases](https://github.com/1837620622/wifi-wrench-android/releases/latest)），下载 `WiFi-Wrench-0.3.0-build29-debug.apk`（可用同页 SHA256 校验）。备用：Actions [build 29](https://github.com/1837620622/wifi-wrench-android/actions/runs/42042130758) Artifacts 里的 `wifi-wrench-debug-29`（不要装 androidTest APK）。
+1. 打开 [v0.3.0-build32](https://github.com/1837620622/wifi-wrench-android/releases/tag/v0.3.0-build32)（或 [Releases](https://github.com/1837620622/wifi-wrench-android/releases/latest)），下载 `WiFi-Wrench-0.3.0-build32-debug.apk`（可用同页 SHA256 校验）。备用：Actions [build 32](https://github.com/1837620622/wifi-wrench-android/actions/runs/42045524385) Artifacts 里的 `wifi-wrench-debug-32`（不要装 androidTest APK）。
 2. 先到系统连接扳手 Wi‑Fi；App **自适应探测** TCP（默认先试 `192.168.4.1:7888`，不通则自动换候选/短扫；正式界面不填、不选端口）。
 3. 「测点与记录」页填板号/测点 →「开始测量」；工作台里先开「远程」，再正转/反转（需确认），随时可「停止扳手」。
 4. 「导出 Excel」生成带原生图表的 `.xlsx`（全量过程点）；设置里可同时导出 CSV。曲线显示窗口不截断数据库全量。
