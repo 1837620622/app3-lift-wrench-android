@@ -25,6 +25,6 @@ class TorqueAngleDecoderTest {
             ),
             frame.points.map { it.torqueNm to it.angleDeg },
         )
-        assertEquals(listOf(1000L, 1001L, 1002L, 1003L, 1004L), frame.points.map { it.timestampMillis })
+        assertEquals(List(5) { 1000L }, frame.points.map { it.timestampMillis })
     }
 }

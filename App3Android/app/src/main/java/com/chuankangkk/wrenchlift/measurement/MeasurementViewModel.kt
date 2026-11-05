@@ -69,6 +69,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
     private var connection: WrenchConnection = TcpWrenchClient()
     private var stateJob: Job? = null
     private var packetJob: Job? = null
+    private var connectJob: Job? = null
     private var sessionId: Long? = null
     private var connectionMode: String = "未连接"
     private val sessionMutex = Mutex()
@@ -150,8 +151,22 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun connectTcp() {
-        if (_state.value.connectionState.isOnline || _state.value.connectionState is ConnectionState.Connecting) return
-        viewModelScope.launch {
+        if (connectJob?.isActive == true || _state.value.connectionState.isOnline || _state.value.connectionState is ConnectionState.Connecting) return
+        _state.update { it.copy(connectionState = ConnectionState.Connecting) }
+        connectJob = viewModelScope.launch {
+            try {
+            measurementMutex.withLock {
+                // 每次重新连接单独建会话，避免更换扳手或测点后混入上一台的数据。
+                packetJob?.cancelAndJoin()
+                val old = _state.value
+                sessionId?.let { persistSessionSummary(it, old.lastResult?.status?.label ?: "采集结束", old.lastResult, old.lastPulseResult) }
+                sessionId = null
+                _state.value = MeasurementState(
+                    targetWifiName = old.targetWifiName, host = old.host, port = old.port,
+                    session = old.session.copy(deviceSn = "未知设备"), recentSessions = old.recentSessions,
+                    connectionState = ConnectionState.Connecting,
+                )
+            }
             val current = _state.value
             val portNumber = current.port.toIntOrNull() ?: 7888
             val requestedHost = current.host.ifBlank { "192.168.4.1" }
@@ -182,6 +197,12 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                 sendConnectionProbe()
             } else {
                 appendLog("连接未成功：${diagnostic.summary}")
+            }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _state.update { it.copy(connectionState = ConnectionState.Error(error.message ?: "连接失败")) }
+                appendLog("连接失败：${error.message}")
             }
         }
     }
@@ -278,8 +299,8 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
     fun newRecord() {
         if (_state.value.connectionState.isOnline || _state.value.connectionState is ConnectionState.Connecting) return
         viewModelScope.launch {
-            packetJob?.cancelAndJoin()
             measurementMutex.withLock {
+                packetJob?.cancelAndJoin()
                 sessionId = null
                 val old = _state.value
                 _state.value = MeasurementState(targetWifiName = old.targetWifiName, host = old.host, port = old.port, session = old.session,
@@ -337,7 +358,8 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                                     displacementMm = point.displacementMm, warningLevel = WarningLevel.WATCH, rawHex = point.rawHex,
                                 )
                                 MeasurementCsvExporter.writePoint(writer,
-                                    metadata.copy(recentPoints = listOf(measured)), ++rowCount, measured)
+                                    metadata.copy(recentPoints = listOf(measured),
+                                        lastPacketFunction = point.rawHex.split(' ', limit = 5).getOrNull(3)?.toIntOrNull(16)), ++rowCount, measured)
                             }
                             cursor = page.last().id
                         }
@@ -623,6 +645,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                     )
                 }
                 appendLog("收到设备编号：${sn.sn}")
+                sessionId?.let { repository.updateDeviceSn(it, sn.sn) }
             }
             WrenchPacket.FUNC_BATTERY -> {
                 BatteryDecoder.decodePercent(packet)?.let { percent ->

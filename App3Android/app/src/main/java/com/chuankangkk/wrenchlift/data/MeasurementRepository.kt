@@ -116,6 +116,7 @@ class MeasurementRepository(
     suspend fun countEffectivePoints(sessionId: Long): Int =
         dao.countEffectivePoints(sessionId)
     suspend fun getSession(id: Long) = dao.getSession(id)
+    suspend fun updateDeviceSn(id: Long, sn: String) = dao.updateDeviceSn(id, sn)
     suspend fun lastPointId(id: Long) = dao.lastPointId(id)
     suspend fun pointsPage(id: Long, afterId: Long, throughId: Long) = dao.pointsPage(id, afterId, throughId)
 }

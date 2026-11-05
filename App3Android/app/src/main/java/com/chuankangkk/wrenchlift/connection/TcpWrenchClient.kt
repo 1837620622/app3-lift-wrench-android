@@ -42,8 +42,9 @@ class TcpWrenchClient(
         disconnect()
         _connectionState.value = ConnectionState.Connecting
         withContext(Dispatchers.IO) {
+            val newSocket = Socket()
             runCatching {
-                Socket().also { newSocket ->
+                newSocket.also {
                     newSocket.tcpNoDelay = true
                     newSocket.keepAlive = true
                     newSocket.connect(InetSocketAddress(host, port), connectTimeoutMillis)
@@ -54,6 +55,7 @@ class TcpWrenchClient(
                 startReadLoop()
                 startHeartbeatLoop()
             }.onFailure { throwable ->
+                runCatching { newSocket.close() }
                 closeSocketQuietly()
                 _connectionState.value = ConnectionState.Error(throwable.message ?: "TCP 连接失败")
             }

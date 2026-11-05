@@ -98,13 +98,16 @@ interface MeasurementDao {
     @Query("SELECT COUNT(*) FROM torque_points WHERE sessionId = :sessionId AND isEffectivePoint = 1")
     suspend fun countEffectivePoints(sessionId: Long): Int
 
-    @Query("SELECT * FROM measurement_sessions ORDER BY startTime DESC LIMIT :limit")
+    @Query("SELECT * FROM measurement_sessions WHERE actualTorqueNm IS NOT NULL OR EXISTS (SELECT 1 FROM torque_points WHERE sessionId = measurement_sessions.id) ORDER BY startTime DESC, id DESC LIMIT :limit")
     fun observeRecentSessions(limit: Int = 20): Flow<List<MeasurementEntity>>
 
     @Query("SELECT * FROM torque_points WHERE sessionId = :sessionId ORDER BY id ASC")
     fun observePoints(sessionId: Long): Flow<List<TorquePointEntity>>
     @Query("SELECT * FROM measurement_sessions WHERE id = :id")
     suspend fun getSession(id: Long): MeasurementEntity?
+
+    @Query("UPDATE measurement_sessions SET deviceSn = :sn WHERE id = :id")
+    suspend fun updateDeviceSn(id: Long, sn: String)
 
     @Query("SELECT MAX(id) FROM torque_points WHERE sessionId = :sessionId")
     suspend fun lastPointId(sessionId: Long): Long?
