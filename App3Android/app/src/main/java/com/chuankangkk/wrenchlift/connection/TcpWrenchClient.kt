@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -70,6 +71,13 @@ class TcpWrenchClient(
         heartbeat?.join()
         reader?.join()
         parser.reset()
+        _connectionState.value = ConnectionState.Disconnected
+    }
+
+    override fun close() {
+        // ViewModel 清理时其协程作用域已取消，必须同步关闭 socket 才能解除阻塞读取。
+        scope.cancel()
+        closeSocketQuietly()
         _connectionState.value = ConnectionState.Disconnected
     }
 

@@ -44,16 +44,25 @@ jobs:
         working-directory: App3Android
         env:
           APP3_DEBUG_KEYSTORE: ${{ runner.temp }}/app3-debug.p12
-          APP3_DEBUG_STORE_PASSWORD: ${{ secrets.APP3_DEBUG_STORE_PASSWORD }}
+          APP3_DEBUG_STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.APP3_DEBUG_STORE_PASSWORD || '' }}
         run: |
           chmod +x gradlew
           ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease --stacktrace --console=plain -Papp3.versionCode=$((1000 + GITHUB_RUN_NUMBER))
+      - name: Verify APK signature and version
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs .build/app/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging .build/app/outputs/apk/debug/app-debug.apk > .build/app/outputs/apk/debug/apk-metadata.txt
+          grep -F "versionCode='$((1000 + GITHUB_RUN_NUMBER))'" .build/app/outputs/apk/debug/apk-metadata.txt
+          grep -F "versionName='0.2.0-debug.$((1000 + GITHUB_RUN_NUMBER))'" .build/app/outputs/apk/debug/apk-metadata.txt
+          sha256sum .build/app/outputs/apk/debug/app-debug.apk > .build/app/outputs/apk/debug/SHA256SUMS
       - name: APK and emulator test APK
         uses: actions/upload-artifact@v4
         with:
           name: app3-debug-${{ github.run_number }}
           path: |
             .build/app/outputs/apk/debug/*.apk
+            .build/app/outputs/apk/debug/apk-metadata.txt
+            .build/app/outputs/apk/debug/SHA256SUMS
             .build/app/outputs/apk/androidTest/debug/*.apk
           if-no-files-found: error
           retention-days: 14

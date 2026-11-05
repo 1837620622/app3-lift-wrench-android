@@ -79,6 +79,7 @@ fun WorkerWorkbench(
                         Button(onClick = if (online) onDisconnect else onConnect, enabled = !connecting) { Text(if (online) "断开设备" else "连接扳手") }
                     }
                     Text(state.networkDiagnosticSummary, color = AppColors.textSecondary)
+                    Text("软件版本 ${BuildConfig.VERSION_NAME} · 构建 ${BuildConfig.VERSION_CODE}", color = AppColors.textSecondary)
                 }
                 "history" -> LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
                     item { Text("记录保存在本机。每条 CSV 导出全部采集点，曲线显示窗口不影响导出。", color = AppColors.textSecondary) }

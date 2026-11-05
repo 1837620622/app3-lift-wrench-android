@@ -27,4 +27,20 @@ class CalibrationBoundaryTest {
         val frame = com.chuankangkk.wrenchlift.protocol.TorqueAngleDecoder.decode(packet, 1000L)
         assertEquals(listOf(1000L, 1000L), frame.points.map { it.timestampMillis })
     }
+
+    @Test fun streamingCsvPreservesMoreThanOneDisplayWindowAndEscapesFormulaText() {
+        val metadata = MeasurementState(session = MeasurementSession(projectName = "=1+1"))
+        val output = StringBuilder()
+        MeasurementCsvExporter.writeHeader(output)
+        repeat(1205) { i ->
+            MeasurementCsvExporter.writePoint(output, metadata, i + 1,
+                MeasuredPoint(TorqueAnglePoint(i.toDouble(), i, i.toDouble(), 1000L),
+                    1, null, warningLevel = WarningLevel.WATCH, rawHex = "row-$i"))
+        }
+        val lines = output.lines().filter { it.isNotEmpty() }
+        assertEquals(1206, lines.size)
+        assertTrue(lines.last().contains("row-1204"))
+        assertTrue(lines[1].startsWith("'=1+1,"))
+        assertTrue(output.startsWith("\uFEFF"))
+    }
 }

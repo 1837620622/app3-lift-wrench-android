@@ -902,10 +902,8 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     override fun onCleared() {
+        connection.close()
         super.onCleared()
-        viewModelScope.launch {
-            connection.disconnect()
-        }
     }
 }
 
