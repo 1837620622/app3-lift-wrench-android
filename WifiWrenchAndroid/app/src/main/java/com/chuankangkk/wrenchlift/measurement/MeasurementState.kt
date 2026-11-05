@@ -84,7 +84,11 @@ data class MeasurementState(
     val currentSessionId: Long? = null,
     val lastExport: ExportOutcome? = null,
     val exportCsvToo: Boolean = false,
-    val darkTheme: Boolean = false,
+    val darkTheme: Boolean = true,
+    val deviceErrorCode: Int? = null,
+    val deviceReverseDirection: Boolean? = null,
+    val wrenchModel: WrenchModel = WrenchModel.TORQUE,
+    val pulseStatus: String = "",
 )
 
 fun MeasurementState.hasWrenchMeasurementData(): Boolean =

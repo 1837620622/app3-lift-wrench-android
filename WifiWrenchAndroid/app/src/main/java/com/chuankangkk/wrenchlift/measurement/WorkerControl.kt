@@ -26,6 +26,27 @@ enum class LinkPhase {
     DROPPED,
 }
 
+/** 扳手类型：决定参数侧滑下发 0x10（定扭矩）还是 0x50 / 0x51（脉冲、离合、冲击）。默认定扭矩。 */
+enum class WrenchModel(val label: String, val functionLabel: String) {
+    TORQUE("定扭矩扳手", "0x10"),
+    PULSE_RC283F("脉冲扳手（RC283F 驱动）", "0x50"),
+    PULSE_RCH("脉冲扳手（RCH 驱动）", "0x51"),
+}
+
+/** 脉冲类参数草稿（文本输入，保存时校验）。 */
+data class PulseDraft(
+    val mode: Int,
+    val targetTorque: String = "",
+    val k1: String = "",
+    val k2: String = "",
+    val k3: String = "",
+    val presetIndex: String = "1",
+    val setTorqueRaw: String = "",
+    val boltStatus: String = "0",
+    val precision: String = "0",
+    val boltCount: String = "0",
+)
+
 /** App 最后一次成功发出的运动指令。协议没有可靠的实时方向回读，这里只代表「App 发了什么」。 */
 enum class MotionCommand { NONE, FORWARD, REVERSE, STOPPED }
 
@@ -64,6 +85,17 @@ object WorkerText {
         LinkPhase.IDLE -> "未连接 · 点此连接"
     }
 
+    /** 窄屏/大字体顶栏用的最短说法。 */
+    fun linkTiny(state: MeasurementState): String = when (state.linkPhase) {
+        LinkPhase.READY -> "已连上"
+        LinkPhase.WAITING_REPLY -> "等回话"
+        LinkPhase.PROBING -> "连接中"
+        LinkPhase.NO_WIFI -> "未连 Wi‑Fi"
+        LinkPhase.FAILED -> "失败·重试"
+        LinkPhase.DROPPED -> "断开·重试"
+        LinkPhase.IDLE -> "点此连接"
+    }
+
     /** 读数格式：协议过程值是整数时不显示无意义的 .0。 */
     fun readout(value: Double?, hasData: Boolean): String {
         if (!hasData || value == null || !value.isFinite()) return "--"
@@ -92,6 +124,10 @@ object WorkerText {
         state.motion == MotionCommand.STOPPED -> "已停止"
         else -> "可以转动"
     }
+
+    /** 0x05 错误码非 0 时给工人一句话；具体码值只作参考，含义以厂家为准。 */
+    fun deviceError(state: MeasurementState): String? =
+        state.deviceErrorCode?.takeIf { it != 0 }?.let { "扳手报错（代码 $it）" }
 
     fun battery(state: MeasurementState): String = state.batteryPercent?.let { "电量 $it%" } ?: "电量 --"
 

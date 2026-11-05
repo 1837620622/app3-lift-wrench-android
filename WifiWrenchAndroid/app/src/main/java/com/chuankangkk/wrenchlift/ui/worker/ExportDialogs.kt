@@ -52,6 +52,14 @@ fun ExportDialogs(state: MeasurementState, actions: WorkerActions, onRetry: () -
             dismissText = null,
             extra = outcome.shareUri?.let { uri ->
                 {
+                    ControlButton("打开", null, onClick = {
+                        runCatching {
+                            val view = Intent(Intent.ACTION_VIEW)
+                                .setDataAndType(Uri.parse(uri), outcome.mimeType)
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(Intent.createChooser(view, "用表格软件打开").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }.onFailure { Toast.makeText(context, "没有能打开 Excel 的应用，可用「分享」发到电脑", Toast.LENGTH_LONG).show() }
+                    }, height = WrenchDimens.touch, modifier = Modifier.testTag("export_open"))
                     ControlButton("分享", WrenchIcon.Share, onClick = {
                         runCatching {
                             val send = Intent(Intent.ACTION_SEND)
@@ -60,7 +68,7 @@ fun ExportDialogs(state: MeasurementState, actions: WorkerActions, onRetry: () -
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             context.startActivity(Intent.createChooser(send, "分享导出文件").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         }.onFailure { Toast.makeText(context, "没有可用的分享方式", Toast.LENGTH_SHORT).show() }
-                    }, height = WrenchDimens.touch)
+                    }, height = WrenchDimens.touch, modifier = Modifier.testTag("export_share"))
                 }
             },
             body = {

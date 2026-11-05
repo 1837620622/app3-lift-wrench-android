@@ -69,7 +69,7 @@ internal object Xml {
 
 /** 单元格值：只区分数字与文本两类，避免公式注入（不写任何公式单元格）。 */
 internal sealed interface Cell {
-    data class Num(val value: Double) : Cell
+    data class Num(val value: Double, val style: Int = Styles.DEFAULT) : Cell
     data class Text(val value: String) : Cell
     data object Blank : Cell
 }
@@ -77,15 +77,23 @@ internal sealed interface Cell {
 internal fun num(value: Number?): Cell = value?.toDouble()?.let { Cell.Num(it) } ?: Cell.Blank
 internal fun text(value: String?): Cell = if (value.isNullOrEmpty()) Cell.Blank else Cell.Text(value)
 
+/** Excel 日期时间单元格（序列值 + 日期格式），按 Asia/Shanghai 本地时间。 */
+internal fun dateTime(epochMillis: Long?): Cell = epochMillis?.let {
+    val local = epochMillis + java.util.TimeZone.getTimeZone("Asia/Shanghai").getOffset(it)
+    Cell.Num(local / 86_400_000.0 + 25_569.0, Styles.DATETIME)
+} ?: Cell.Blank
+
 internal object Styles {
     const val DEFAULT = 0
     const val HEADER = 1
     const val TITLE = 2
     const val NOTE = 3
     const val LABEL = 4
+    const val DATETIME = 5
 
     val xml: String = Xml.HEADER + """
 <styleSheet xmlns="${Xml.NS_MAIN}">
+<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd hh:mm:ss.000"/></numFmts>
 <fonts count="4">
 <font><sz val="11"/><name val="Calibri"/><family val="2"/></font>
 <font><b/><sz val="11"/><color rgb="FF1B1F24"/><name val="Calibri"/><family val="2"/></font>
@@ -102,12 +110,13 @@ internal object Styles {
 <border><left/><right/><top/><bottom style="thin"><color rgb="FFD7DDE3"/></bottom><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="5">
+<cellXfs count="6">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
 <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment wrapText="0"/></xf>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>
@@ -146,7 +155,8 @@ internal class SheetWriter(
         out.write("<row r=\"$rowNumber\">")
         cells.forEachIndexed { index, cell ->
             val ref = Xml.cellRef(index, rowNumber)
-            val styleAttr = if (style != Styles.DEFAULT) " s=\"$style\"" else ""
+            val cellStyle = if (cell is Cell.Num && cell.style != Styles.DEFAULT) cell.style else style
+            val styleAttr = if (cellStyle != Styles.DEFAULT) " s=\"$cellStyle\"" else ""
             when (cell) {
                 is Cell.Num -> {
                     val value = Xml.number(cell.value)

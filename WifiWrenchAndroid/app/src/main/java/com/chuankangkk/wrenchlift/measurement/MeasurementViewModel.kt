@@ -95,7 +95,8 @@ class MeasurementViewModel @JvmOverloads constructor(
             pointNo = connectionPreferences.getString(PREF_POINT, null) ?: MeasurementSession().pointNo,
         ),
         exportCsvToo = connectionPreferences.getBoolean(PREF_EXPORT_CSV, false),
-        darkTheme = connectionPreferences.getBoolean(PREF_DARK, false),
+        darkTheme = connectionPreferences.getBoolean(PREF_DARK, true),
+        wrenchModel = runCatching { WrenchModel.valueOf(connectionPreferences.getString(PREF_MODEL, null) ?: "") }.getOrDefault(WrenchModel.TORQUE),
     ))
     val state: StateFlow<MeasurementState> = _state.asStateFlow()
 
@@ -181,6 +182,58 @@ class MeasurementViewModel @JvmOverloads constructor(
     fun setDarkTheme(enabled: Boolean) {
         _state.update { it.copy(darkTheme = enabled) }
         connectionPreferences.edit().putBoolean(PREF_DARK, enabled).apply()
+    }
+
+    fun setWrenchModel(model: WrenchModel) {
+        _state.update { it.copy(wrenchModel = model) }
+        connectionPreferences.edit().putString(PREF_MODEL, model.name).apply()
+    }
+
+    /** 脉冲类扳手参数（0x50 RC283F / 0x51 RCH）。只在设置里选了对应扳手类型时由参数侧滑调用。 */
+    fun writePulseParameters(draft: PulseDraft) {
+        val current = _state.value
+        if (!RemoteGate.canWriteParameters(current)) {
+            _state.update { it.copy(pulseStatus = "未连上扳手，参数未写入") }
+            return
+        }
+        val packet = runCatching {
+            fun Int?.need(name: String) = this ?: throw IllegalArgumentException("请填写$name")
+            when (current.wrenchModel) {
+                WrenchModel.PULSE_RC283F -> WrenchPacketBuilder.pulseParameterSetRc283f(
+                    com.chuankangkk.wrenchlift.protocol.Rc283fPulseSettings(
+                        mode = draft.mode,
+                        targetTorqueNm = draft.targetTorque.toDoubleOrNull() ?: throw IllegalArgumentException("请填写目标扭矩"),
+                        k1 = if (draft.mode == 0) 0 else draft.k1.toIntOrNull().need("K1"),
+                        k2 = if (draft.mode == 0) 0 else draft.k2.toIntOrNull().need("K2"),
+                        k3 = if (draft.mode == 0) 0 else draft.k3.toIntOrNull().need("K3"),
+                        boltStatusPercent = draft.boltStatus.toIntOrNull() ?: 0,
+                        errorPrecision = draft.precision.toIntOrNull() ?: 0,
+                        boltCount = draft.boltCount.toIntOrNull() ?: 0,
+                    ),
+                )
+                WrenchModel.PULSE_RCH -> WrenchPacketBuilder.pulseParameterSetRch(
+                    com.chuankangkk.wrenchlift.protocol.RchPulseSettings(
+                        mode = draft.mode,
+                        presetIndex = draft.presetIndex.toIntOrNull() ?: 1,
+                        k1 = if (draft.mode == 3) draft.k1.toIntOrNull().need("K1") else 0,
+                        k2 = if (draft.mode == 3) draft.k2.toIntOrNull().need("K2") else 0,
+                        k3 = if (draft.mode == 3) draft.k3.toIntOrNull().need("K3") else 0,
+                        setTorqueRaw = if (draft.mode == 3) draft.setTorqueRaw.toIntOrNull().need("设定扭矩") else 0,
+                        boltStatusPercent = draft.boltStatus.toIntOrNull() ?: 0,
+                        errorPrecision = draft.precision.toIntOrNull() ?: 0,
+                        boltCount = draft.boltCount.toIntOrNull() ?: 0,
+                    ),
+                )
+                WrenchModel.TORQUE -> throw IllegalArgumentException("当前扳手类型为定扭矩，请用 0x10 参数")
+            }
+        }.getOrElse { error ->
+            _state.update { it.copy(pulseStatus = error.message ?: "参数超出协议范围") }
+            appendLog("脉冲参数被拦截：${error.message}")
+            return
+        }
+        sendCommand(packet, LABEL_PARAMS) {
+            it.copy(pulseStatus = "已发送 ${current.wrenchModel.functionLabel} 参数", controlMessage = "参数已发送")
+        }
     }
 
     fun clearLastExport() {
@@ -1158,7 +1211,13 @@ class MeasurementViewModel @JvmOverloads constructor(
             }
             WrenchPacket.FUNC_STATUS -> {
                 val status = DeviceStatusDecoder.decode(packet)
-                _state.update { it.copy(lastProtocolSummary = "设备状态 ${status.summary}") }
+                _state.update {
+                    it.copy(
+                        lastProtocolSummary = "设备状态 ${status.summary}",
+                        deviceErrorCode = status.errorCode ?: it.deviceErrorCode,
+                        deviceReverseDirection = status.reverseDirection ?: it.deviceReverseDirection,
+                    )
+                }
                 appendLog("收到设备状态：${status.summary}")
             }
             WrenchPacket.FUNC_NUT_RESET -> {
@@ -1447,7 +1506,7 @@ class MeasurementViewModel @JvmOverloads constructor(
         autoConnect = autoConnect, lastGoodEndpoint = lastGoodEndpoint, probeReport = probeReport,
         currentWifiName = currentWifiName, localIp = localIp, gatewayIp = gatewayIp, inWrenchSubnet = inWrenchSubnet,
         networkDiagnosticSummary = networkDiagnosticSummary,
-        exportCsvToo = exportCsvToo, darkTheme = darkTheme,
+        exportCsvToo = exportCsvToo, darkTheme = darkTheme, wrenchModel = wrenchModel,
     )
 
     override fun onCleared() {
@@ -1471,6 +1530,7 @@ class MeasurementViewModel @JvmOverloads constructor(
         const val PREF_POINT = "point_no"
         const val PREF_EXPORT_CSV = "export_csv_too"
         const val PREF_DARK = "ui_dark"
+        const val PREF_MODEL = "wrench_model"
 
         const val LABEL_REMOTE_ON = "开启远程"
         const val LABEL_REMOTE_OFF = "关闭远程"

@@ -49,24 +49,26 @@ fun SplashScreen(modifier: Modifier = Modifier, animate: Boolean = true) {
     val fade = remember { Animatable(if (animate) 0f else 1f) }
     LaunchedEffect(Unit) { if (animate) fade.animateTo(1f, tween(420)) }
     BoxWithConstraints(modifier.fillMaxSize().background(SplashColors.background).testTag("splash")) {
-        val imageHeight = maxHeight * 0.46f
+        // 构图对齐产品方启动页稿：上方主副标题，中间 T 形手把扳手，底部署名。
+        val imageHeight = maxHeight * 0.50f
+        val titleSize = (maxHeight.value * 0.095f).coerceIn(34f, 64f).sp
         Column(
             Modifier.fillMaxSize().alpha(fade.value).windowInsetsPadding(WindowInsets.safeDrawing),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.weight(0.6f))
+            Spacer(Modifier.weight(0.55f))
+            Text("WiFi 扳手", color = SplashColors.title, fontSize = titleSize, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Spacer(Modifier.height(4.dp))
+            Text("隔振器顶升调频采集", color = SplashColors.subtitle, fontSize = (titleSize.value * 0.45f).sp, letterSpacing = 3.sp)
+            Spacer(Modifier.weight(0.25f))
             Image(
                 painter = painterResource(R.drawable.wifi_wrench_splash_t_handle),
                 contentDescription = "T 形手把 Wi‑Fi 扭矩扳手",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.height(imageHeight),
             )
-            Spacer(Modifier.height(10.dp))
-            Text("WiFi 扳手", color = SplashColors.title, fontSize = 38.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
-            Spacer(Modifier.height(6.dp))
-            Text("隔振器顶升调频采集", color = SplashColors.subtitle, fontSize = 18.sp, letterSpacing = 2.sp)
-            Spacer(Modifier.weight(1f))
-            Text("传康Kk · 免费供应", color = SplashColors.footer, fontSize = 13.sp, modifier = Modifier.padding(bottom = 18.dp))
+            Spacer(Modifier.weight(0.6f))
+            Text("传康Kk · 免费供应", color = SplashColors.footer, fontSize = 14.sp, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 16.dp))
         }
     }
 }

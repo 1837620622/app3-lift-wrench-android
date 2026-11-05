@@ -60,6 +60,10 @@ object WorkerSamples {
         )
     }
 
+    fun result() = com.chuankangkk.wrenchlift.protocol.ResultFrameDecoder.decode(
+        com.chuankangkk.wrenchlift.protocol.TestPacketFactory.resultFrame(0x00, "0000000000", 1, 343, 377),
+    )
+
     fun sessions(): List<MeasurementEntity> = List(6) { i ->
         MeasurementEntity(
             id = 20L - i, projectName = "钢弹簧浮置板顶升", lineName = "1号线", sectionName = "A-B", slabNo = "FZB-0${12 - i / 2}",

@@ -71,6 +71,35 @@ class SessionWorkbookWriterTest {
         assertAllXmlWellFormed(bytes)
     }
 
+    @Test fun everyProcessRowMatchesSourceValuesExactly() {
+        val points = rows(3_000)
+        val (bytes, _) = build(points)
+        XSSFWorkbook(ByteArrayInputStream(bytes)).use { book ->
+            val data = book.getSheet("过程数据")
+            assertEquals("接收时间（手机）", data.getRow(0).getCell(1).stringCellValue)
+            points.forEachIndexed { i, expected ->
+                val row = data.getRow(i + 1)
+                assertEquals("序号 $i", expected.index.toDouble(), row.getCell(0).numericCellValue, 0.0)
+                assertEquals("时间戳 $i", expected.receivedAtMillis.toDouble(), row.getCell(2).numericCellValue, 0.0)
+                assertEquals("螺栓号 $i", expected.boltNo.toDouble(), row.getCell(4).numericCellValue, 0.0)
+                assertEquals("扭矩 $i", expected.torqueNm, row.getCell(5).numericCellValue, 1e-9)
+                assertEquals("转角 $i", expected.angleDeg, row.getCell(6).numericCellValue, 1e-9)
+                assertEquals("原始转角 $i", expected.angleRaw.toDouble(), row.getCell(7).numericCellValue, 0.0)
+            }
+            // 接收时间是 Excel 原生日期时间（可排序/筛选），显示为北京时间。
+            val timeCell = data.getRow(1).getCell(1)
+            assertTrue(org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(timeCell))
+            val shown = org.apache.poi.ss.usermodel.DataFormatter().formatCellValue(timeCell)
+            assertEquals(SessionWorkbookWriter.formatTime(points.first().receivedAtMillis).substring(0, 19), shown.substring(0, 19))
+            val summary = book.getSheet("概要")
+            val labels = (0..summary.lastRowNum).mapNotNull { summary.getRow(it)?.getCell(0)?.stringCellValue }
+            assertTrue(labels.contains("过程点数（全量）"))
+            val countRow = (0..summary.lastRowNum).first { summary.getRow(it)?.getCell(0)?.stringCellValue == "过程点数（全量）" }
+            assertEquals(3_000.0, summary.getRow(countRow).getCell(1).numericCellValue, 0.0)
+            assertTrue(labels.contains("未标定：本表不含顶升力等正式力值。"))
+        }
+    }
+
     @Test fun resultOnlyRecordStillExportsTargetVersusActualChart() {
         val (bytes, stats) = build(emptyList())
         assertEquals(0L, stats.processRows)

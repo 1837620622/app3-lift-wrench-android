@@ -92,6 +92,8 @@ object TorqueAngleWindow {
             latest = latest,
             windowed = windowed,
             sampled = drawn.any { it.points.size < it.sourceCount },
+            currentPeak = latestSegment.maxBy { it.sourcePoint.torqueNm }.toChartPoint(),
+            currentPointCount = latestSegment.size,
         )
     }
 
@@ -147,6 +149,9 @@ data class TorqueAngleView(
     val latest: ChartPoint?,
     val windowed: Boolean,
     val sampled: Boolean,
+    /** 当前运行段（未抽样）的峰值扭矩点。 */
+    val currentPeak: ChartPoint? = null,
+    val currentPointCount: Int = 0,
 ) {
     val isEmpty: Boolean get() = latest == null
 

@@ -46,11 +46,15 @@ class WorkerScreensTest {
         show(WorkerSamples.live(remote = false))
         listOf("back", "top_bar", "readouts", "torque_chart", "controls", "remote_toggle", "forward", "reverse", "stop", "params", "export", "bottom_strip")
             .forEach { compose.onNodeWithTag(it, useUnmergedTree = true).assertExists() }
-        compose.onNodeWithText("板号 FZB-012 · 测点 P03").assertIsDisplayed()
-        compose.onNodeWithText("SN 2026110501").assertIsDisplayed()
-        compose.onNodeWithText("电量 82%").assertIsDisplayed()
-        compose.onNodeWithText("已连上扳手").assertIsDisplayed()
-        compose.onNodeWithText("远程未启用").assertIsDisplayed()
+        // 顶栏分格：板号 · 测点 · SN · 电量 · 通信 · 远程 · 返回。
+        compose.onNodeWithText("FZB-012").assertIsDisplayed()
+        compose.onNodeWithText("P03").assertIsDisplayed()
+        compose.onNodeWithText("2026110501").assertIsDisplayed()
+        compose.onNodeWithText("82%").assertIsDisplayed()
+        compose.onNodeWithText("已连上", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("未启用").assertIsDisplayed()
+        compose.onNodeWithText("扭矩 / 转角").assertIsDisplayed()
+        compose.onNodeWithText("峰值", substring = true).assertIsDisplayed()
         // NET-02：主流程不出现端口 / IP / 协议码。
         listOf("7888", "192.168", "端口", "TCP", "0x").forEach { word ->
             assertEquals("主屏不应出现 $word", 0, compose.onAllNodesWithText(word, substring = true).fetchSemanticsNodes().size)
@@ -188,6 +192,53 @@ class WorkerScreensTest {
     fun midPhoneWorkbench() {
         show(WorkerSamples.live(remote = false))
         capture("workbench-853x480")
+    }
+
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
+    fun ruggedPhone20by9Workbench() {
+        show(WorkerSamples.live(remote = true, motion = MotionCommand.FORWARD).copy(lastResult = WorkerSamples.result()))
+        listOf("forward", "reverse", "stop", "params", "export", "readout_torque", "readout_angle", "back").forEach {
+            compose.onNodeWithTag(it).assertIsDisplayed()
+        }
+        capture("rugged-914x411-remote-on")
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land-xhdpi")
+    fun ruggedPhoneHdPlusWorkbench() {
+        show(WorkerSamples.live(remote = false))
+        listOf("forward", "reverse", "stop", "params", "export").forEach { compose.onNodeWithTag(it).assertIsDisplayed() }
+        capture("rugged-800x360-remote-off")
+    }
+
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
+    fun lightThemeOptionStillAvailable() {
+        show(WorkerSamples.live(remote = true).copy(darkTheme = false))
+        capture("rugged-914x411-light")
+    }
+
+    @Test fun wrenchErrorCodeIsShownNextToControls() {
+        show(WorkerSamples.live(remote = true).copy(deviceErrorCode = 18))
+        compose.onNodeWithText("扳手报错（代码 18）").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
+    fun pulseWrenchParametersUse0x50Fields() {
+        var written: com.chuankangkk.wrenchlift.measurement.PulseDraft? = null
+        show(
+            WorkerSamples.live(remote = true).copy(wrenchModel = com.chuankangkk.wrenchlift.measurement.WrenchModel.PULSE_RC283F),
+            WorkerActions(writePulseParameters = { written = it }),
+        )
+        compose.onNodeWithTag("params").performClick()
+        compose.onNodeWithText("定点硬连接").assertExists()
+        compose.onNodeWithText("K1（50-350）").assertExists()
+        capture("rugged-914x411-pulse-params")
+        compose.onNodeWithTag("param_save").performClick()
+        compose.onNodeWithText("写入").performClick()
+        compose.runOnIdle { assertEquals(0x00, written?.mode) }
     }
 
     @Test fun emptyWorkbenchWhileProbing() {

@@ -73,7 +73,7 @@ object SessionWorkbookWriter {
     private const val COLOR_BAR = "0D9B8A"
 
     private val dataHeaders = listOf(
-        "序号", "接收时间", "接收时间戳(ms)", "相对首点(s)", "螺栓号", "扭矩 N·m", "转角 °", "原始转角值", "帧类型", "原始HEX",
+        "序号", "接收时间（手机）", "接收时间戳(ms)", "相对首点(s)", "螺栓号", "扭矩 N·m", "转角 °", "原始转角值", "帧类型", "原始HEX",
     )
     private val chartHeaders = listOf("序号", "转角 °", "扭矩 N·m", "相对首点(s)")
 
@@ -119,7 +119,7 @@ object SessionWorkbookWriter {
             val relativeSeconds = (row.receivedAtMillis - start) / 1000.0
             dataSheet.row(
                 listOf(
-                    num(row.index), text(formatTime(row.receivedAtMillis)), num(row.receivedAtMillis), num(relativeSeconds),
+                    num(row.index), dateTime(row.receivedAtMillis), num(row.receivedAtMillis), num(relativeSeconds),
                     num(row.boltNo), num(row.torqueNm), num(row.angleDeg), num(row.angleRaw), text(row.frameLabel), text(row.rawHex),
                 ),
             )
@@ -267,8 +267,8 @@ object SessionWorkbookWriter {
             line("测点", text(summary.pointNo))
             line("操作员", text(summary.operatorName))
             line("扳手 SN", text(summary.deviceSn))
-            line("开始时间", text(formatTime(summary.startTimeMillis)))
-            line("结束时间", text(summary.endTimeMillis?.let(::formatTime) ?: "未结束"))
+            line("开始时间", dateTime(summary.startTimeMillis))
+            line("结束时间", summary.endTimeMillis?.let { dateTime(it) } ?: text("未结束"))
             line("过程点数（全量）", num(totalPoints))
             line("结果状态", text(summary.resultStatus))
             targetActualFirstRow = sheet.rowsWritten + 1
@@ -282,7 +282,7 @@ object SessionWorkbookWriter {
             sheet.row(listOf(text("说明")), Styles.LABEL)
             NOTES.forEach { sheet.row(listOf(text(it)), Styles.NOTE) }
             sheet.row(emptyList())
-            sheet.row(listOf(text("导出时间"), text(formatTime(summary.exportedAtMillis))))
+            sheet.row(listOf(text("导出时间"), dateTime(summary.exportedAtMillis)))
             sheet.row(listOf(text("导出软件"), text("WiFi 扳手 ${summary.appVersion}")))
             sheet.row(listOf(text("著作权 传康Kk · 免费供应")), Styles.NOTE)
             sheet.end()

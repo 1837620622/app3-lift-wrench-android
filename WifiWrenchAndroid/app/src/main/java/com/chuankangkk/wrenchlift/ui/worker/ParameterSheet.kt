@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
 import com.chuankangkk.wrenchlift.measurement.ParameterDraft
+import com.chuankangkk.wrenchlift.measurement.PulseDraft
+import com.chuankangkk.wrenchlift.measurement.WrenchModel
 import com.chuankangkk.wrenchlift.measurement.RemoteGate
 import com.chuankangkk.wrenchlift.measurement.parameterDraft
 import com.chuankangkk.wrenchlift.protocol.WifiWrenchParameterSettings
@@ -56,19 +58,25 @@ fun ParameterSheet(
     state: MeasurementState,
     onDismiss: () -> Unit,
     onSave: (ParameterDraft) -> Unit,
+    onSavePulse: (PulseDraft) -> Unit = {},
 ) {
     val p = palette
+    val pulse = state.wrenchModel != WrenchModel.TORQUE
     var draft by remember { mutableStateOf(state.parameterDraft()) }
     var original by remember { mutableStateOf(state.parameterDraft()) }
+    var pulseDraft by remember { mutableStateOf(defaultPulseDraft(state.wrenchModel)) }
+    var pulseOriginal by remember { mutableStateOf(pulseDraft) }
     var confirmWrite by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
-    LaunchedEffect(visible) {
+    LaunchedEffect(visible, state.wrenchModel) {
         if (visible) {
             draft = state.parameterDraft()
             original = draft
+            if (pulseDraft.mode !in pulseModes(state.wrenchModel).map { it.first }) pulseDraft = defaultPulseDraft(state.wrenchModel)
+            pulseOriginal = pulseDraft
         }
     }
-    val dirty = draft != original
+    val dirty = if (pulse) pulseDraft != pulseOriginal else draft != original
     val requestClose = { if (dirty) confirmDiscard = true else onDismiss() }
     BackHandler(enabled = visible) { requestClose() }
 
@@ -102,7 +110,7 @@ fun ParameterSheet(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("扳手参数", style = WrenchType.headlineStyle.copy(fontSize = 19.sp), color = p.textPrimary)
+                        Text(if (pulse) "扳手参数 · ${state.wrenchModel.label}" else "扳手参数", style = WrenchType.headlineStyle.copy(fontSize = 19.sp), color = p.textPrimary, maxLines = 1)
                         Text("保存后写入扳手，影响后续动作", style = WrenchType.captionStyle, color = p.textSecondary)
                     }
                 }
@@ -110,6 +118,10 @@ fun ParameterSheet(
                     Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    if (pulse) {
+                        PulseFields(state.wrenchModel, pulseDraft) { pulseDraft = it }
+                        Text(state.pulseStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    } else {
                     ModeSelector(draft.mode) { mode ->
                         draft = draft.copy(mode = mode, targetAngle = if (mode == WifiWrenchParameterSettings.MODE_M1) "0" else draft.targetAngle.takeIf { it != "0" } ?: "90")
                     }
@@ -127,6 +139,7 @@ fun ParameterSheet(
                         WrenchTextField(draft.angleUpper, { draft = draft.copy(angleUpper = it.decimalInput()) }, "转角上限 °", Modifier.weight(1f), decimal = true)
                     }
                     Text(state.parameterStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     ControlButton("取消", null, { requestClose() }, Modifier.weight(1f).testTag("param_cancel"), height = WrenchDimens.touch)
@@ -147,7 +160,7 @@ fun ParameterSheet(
             confirmText = "写入",
             onConfirm = {
                 confirmWrite = false
-                onSave(draft)
+                if (pulse) onSavePulse(pulseDraft) else onSave(draft)
             },
             onDismiss = { confirmWrite = false },
             modifier = Modifier.testTag("confirm_params"),
@@ -169,15 +182,61 @@ fun ParameterSheet(
     }
 }
 
+private fun pulseModes(model: WrenchModel): List<Pair<Int, String>> = when (model) {
+    WrenchModel.PULSE_RC283F -> listOf(0x00 to "扭矩模式", 0x01 to "定点硬连接", 0x02 to "定点软连接")
+    WrenchModel.PULSE_RCH -> listOf(0x01 to "定点硬连接", 0x02 to "定点软连接", 0x03 to "任意参数")
+    WrenchModel.TORQUE -> emptyList()
+}
+
+private fun defaultPulseDraft(model: WrenchModel): PulseDraft =
+    PulseDraft(mode = pulseModes(model).firstOrNull()?.first ?: 0)
+
+/** 0x50 / 0x51 字段（最新协议.docx §12/§13）；按模式只开放有效字段。 */
 @Composable
-private fun ModeSelector(mode: Int, onSelect: (Int) -> Unit) {
+private fun PulseFields(model: WrenchModel, draft: PulseDraft, onChange: (PulseDraft) -> Unit) {
+    val digits = { value: String -> value.filter(Char::isDigit).take(5) }
+    ModeSelector(draft.mode, pulseModes(model)) { onChange(draft.copy(mode = it)) }
+    val kEnabled = if (model == WrenchModel.PULSE_RC283F) draft.mode != 0x00 else draft.mode == 0x03
+    if (model == WrenchModel.PULSE_RC283F) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WrenchTextField(draft.targetTorque, { onChange(draft.copy(targetTorque = it.decimalInput())) }, "目标扭矩 N·m（0.1）", Modifier.weight(1f), decimal = true)
+            WrenchTextField(draft.k1, { onChange(draft.copy(k1 = digits(it))) }, "K1（50-350）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WrenchTextField(draft.k2, { onChange(draft.copy(k2 = digits(it))) }, "K2（1-80）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k3, { onChange(draft.copy(k3 = digits(it))) }, "K3（1-3000）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WrenchTextField(draft.presetIndex, { onChange(draft.copy(presetIndex = digits(it))) }, "定点参数序号（1-10）", Modifier.weight(1f), enabled = draft.mode != 0x03, numeric = true)
+            WrenchTextField(draft.setTorqueRaw, { onChange(draft.copy(setTorqueRaw = digits(it))) }, "设定扭矩（原值）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WrenchTextField(draft.k1, { onChange(draft.copy(k1 = digits(it))) }, "K1（50-300）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k2, { onChange(draft.copy(k2 = digits(it))) }, "K2（1-80）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k3, { onChange(draft.copy(k3 = digits(it))) }, "K3（1-20）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        WrenchTextField(draft.boltStatus, { onChange(draft.copy(boltStatus = digits(it))) }, "螺栓状态 %", Modifier.weight(1f), numeric = true)
+        WrenchTextField(draft.precision, { onChange(draft.copy(precision = digits(it))) }, "误差精度", Modifier.weight(1f), numeric = true)
+        WrenchTextField(draft.boltCount, { onChange(draft.copy(boltCount = digits(it))) }, "螺栓个数", Modifier.weight(1f), numeric = true)
+    }
+}
+
+@Composable
+private fun ModeSelector(
+    mode: Int,
+    options: List<Pair<Int, String>> = listOf(WifiWrenchParameterSettings.MODE_M1 to "M1 定扭矩", WifiWrenchParameterSettings.MODE_M2 to "M2 角度控制"),
+    onSelect: (Int) -> Unit,
+) {
     val p = palette
     val shape = WrenchDimens.buttonShape
     Row(
         Modifier.fillMaxWidth().heightIn(min = WrenchDimens.touch).clip(shape).background(p.panelSunken).border(1.dp, p.hairline, shape).padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        listOf(WifiWrenchParameterSettings.MODE_M1 to "M1 定扭矩", WifiWrenchParameterSettings.MODE_M2 to "M2 角度控制").forEach { (value, label) ->
+        options.forEach { (value, label) ->
             val selected = value == mode
             Box(
                 Modifier
@@ -189,7 +248,7 @@ private fun ModeSelector(mode: Int, onSelect: (Int) -> Unit) {
                     .clickable(role = Role.RadioButton) { onSelect(value) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(label, style = WrenchType.buttonStyle.copy(fontSize = 15.sp), color = if (selected) p.textPrimary else p.textSecondary)
+                Text(label, style = WrenchType.buttonStyle.copy(fontSize = 15.sp), color = if (selected) p.textPrimary else p.textSecondary, maxLines = 1)
             }
         }
     }

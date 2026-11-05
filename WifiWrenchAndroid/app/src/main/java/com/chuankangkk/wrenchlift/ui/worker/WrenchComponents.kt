@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
@@ -181,6 +182,44 @@ fun FitNumber(text: String, maxSize: TextUnit, color: Color, modifier: Modifier 
         Text(text, style = WrenchType.number(size), color = color, maxLines = 1, softWrap = false)
     }
 }
+
+/** 大号读数 + 同色小单位（如「500 N·m」）；整体宽度不够时一起缩，数字绝不裁切。 */
+@Composable
+fun FitNumberWithUnit(text: String, unit: String, maxSize: TextUnit, color: Color, modifier: Modifier = Modifier, minScale: Float = 0.45f) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier) {
+        val widthPx = with(density) { maxWidth.toPx() }
+        val gapPx = with(density) { 4.dp.toPx() }
+        val size = remember(text, unit, maxSize, widthPx) {
+            var scale = 1f
+            while (scale > minScale) {
+                val number = measurer.measure(text, WrenchType.number(maxSize * scale), maxLines = 1, softWrap = false).size.width
+                val suffix = measurer.measure(unit, WrenchType.number(maxSize * scale * UNIT_RATIO, FontWeight.Medium), maxLines = 1, softWrap = false).size.width
+                if (number + gapPx + suffix <= widthPx) break
+                scale -= 0.04f
+            }
+            maxSize * scale
+        }
+        val degree = unit == "°"
+        Row(verticalAlignment = if (degree) Alignment.Top else Alignment.Bottom) {
+            Text(text, style = WrenchType.number(size), color = color, maxLines = 1, softWrap = false)
+            Spacer(Modifier.width(if (degree) 1.dp else 4.dp))
+            // 度数符号上标（对齐数字顶部），N·m 等单位贴底。
+            Text(
+                unit,
+                style = WrenchType.number(if (degree) size * 0.55f else size * UNIT_RATIO, FontWeight.Medium),
+                color = color, maxLines = 1, softWrap = false,
+                modifier = Modifier.padding(
+                    top = if (degree) with(density) { (size * 0.04f).toDp() } else 0.dp,
+                    bottom = if (degree) 0.dp else with(density) { (size * 0.12f).toDp() },
+                ),
+            )
+        }
+    }
+}
+
+private const val UNIT_RATIO = 0.36f
 
 /** 开关整行热区 ≥ 48dp。 */
 @Composable

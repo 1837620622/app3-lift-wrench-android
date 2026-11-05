@@ -149,6 +149,44 @@ class RemoteGateViewModelTest {
             assertTrue(outcome.message, outcome.success)
             assertEquals("导出完成（含图表）", outcome.message)
             assertTrue(outcome.displayPath.endsWith(".xlsx"))
+            // 读回 ViewModel 真正写出的文件：75 个过程点全部在表里，扭矩与发出的帧一致。
+            val uri = android.net.Uri.parse(outcome.shareUri!!)
+            val bytes = app.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            org.apache.poi.xssf.usermodel.XSSFWorkbook(java.io.ByteArrayInputStream(bytes)).use { book ->
+                val data = book.getSheet("过程数据")
+                assertEquals(75, data.lastRowNum)
+                assertEquals(0.0, data.getRow(1).getCell(5).numericCellValue, 0.0)
+                assertEquals(24 * 7.0, data.getRow(25).getCell(5).numericCellValue, 0.0)
+                assertEquals(24.0, data.getRow(75).getCell(6).numericCellValue, 0.0)
+                assertTrue(book.getSheet("图表").createDrawingPatriarch().charts.size >= 4)
+            }
+            vm.endSession()
+            awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE }
+        }
+    }
+
+    @Test fun pulseWrenchTypeSends0x50AndStatusFrameSurfacesErrorCode() {
+        ScriptedWrenchServer().use { wrench ->
+            val vm = viewModelFor(wrench)
+            vm.setWrenchModel(WrenchModel.PULSE_RC283F)
+            vm.connectTcp()
+            awaitCondition(message = "握手成功") { vm.state.value.linkPhase == LinkPhase.READY }
+            vm.writePulseParameters(PulseDraft(mode = 0x01, targetTorque = "250.5", k1 = "200", k2 = "40", k3 = "1500", boltCount = "8"))
+            awaitCondition(message = "收到 0x50") { wrench.frames(WrenchPacket.FUNC_PULSE_PARAM_SET_RC283F).isNotEmpty() }
+            val frame = wrench.frames(WrenchPacket.FUNC_PULSE_PARAM_SET_RC283F).single()
+            assertEquals(0x50, frame.payload.size)
+            assertEquals(2505, ((frame.payload[68].toInt() and 0xFF) shl 8) or (frame.payload[69].toInt() and 0xFF))
+            assertTrue(wrench.frames(WrenchPacket.FUNC_PARAM_SET).isEmpty())
+            // 越界参数在 App 侧拦截，不下发。
+            vm.writePulseParameters(PulseDraft(mode = 0x01, targetTorque = "100", k1 = "10", k2 = "40", k3 = "1500"))
+            awaitCondition(message = "拦截提示") { vm.state.value.pulseStatus.contains("K1") }
+            Thread.sleep(200)
+            assertEquals(1, wrench.frames(WrenchPacket.FUNC_PULSE_PARAM_SET_RC283F).size)
+
+            wrench.send(WrenchPacketBuilder.build(WrenchPacket.FUNC_STATUS, byteArrayOf(0x00, 0x12, 0x00, 0x01)))
+            awaitCondition(message = "错误码") { vm.state.value.deviceErrorCode == 0x12 }
+            assertEquals(true, vm.state.value.deviceReverseDirection)
+            vm.setWrenchModel(WrenchModel.TORQUE)
             vm.endSession()
             awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE }
         }

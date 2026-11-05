@@ -2,6 +2,8 @@ package com.chuankangkk.wrenchlift.ui.worker
 
 import com.chuankangkk.wrenchlift.measurement.MeasurementViewModel
 import com.chuankangkk.wrenchlift.measurement.ParameterDraft
+import com.chuankangkk.wrenchlift.measurement.PulseDraft
+import com.chuankangkk.wrenchlift.measurement.WrenchModel
 
 /** 正式工人页可触发的动作。界面只调这里，不直接拼协议帧。 */
 data class WorkerActions(
@@ -28,6 +30,8 @@ data class WorkerActions(
     val setExportCsvToo: (Boolean) -> Unit = {},
     val setDarkTheme: (Boolean) -> Unit = {},
     val refreshWifi: () -> Unit = {},
+    val setWrenchModel: (WrenchModel) -> Unit = {},
+    val writePulseParameters: (PulseDraft) -> Unit = {},
 ) {
     companion object {
         fun from(vm: MeasurementViewModel) = WorkerActions(
@@ -54,6 +58,8 @@ data class WorkerActions(
             setExportCsvToo = vm::setExportCsvToo,
             setDarkTheme = vm::setDarkTheme,
             refreshWifi = vm::refreshWifiInfoAsync,
+            setWrenchModel = vm::setWrenchModel,
+            writePulseParameters = vm::writePulseParameters,
         )
     }
 }

@@ -63,7 +63,8 @@ internal object ChartXml {
         append("<c:smooth val=\"0\"/></c:ser>")
         append("<c:axId val=\"$X_AXIS_ID\"/><c:axId val=\"$Y_AXIS_ID\"/></c:scatterChart>")
         append(valueAxis(X_AXIS_ID, Y_AXIS_ID, "b", spec.xTitle, gridlines = false))
-        append(valueAxis(Y_AXIS_ID, X_AXIS_ID, "l", spec.yTitle, gridlines = true))
+        // 扭矩/转角为协议无符号量：纵轴从 0 起，避免自动缩放夸大差异。
+        append(valueAxis(Y_AXIS_ID, X_AXIS_ID, "l", spec.yTitle, gridlines = true, minZero = true))
     }
 
     private fun StringBuilder.bar(spec: ChartSpec.Bar) {
@@ -82,7 +83,7 @@ internal object ChartXml {
         append("<c:axPos val=\"b\"/><c:numFmt formatCode=\"General\" sourceLinked=\"0\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/>")
         append("<c:tickLblPos val=\"nextTo\"/>").append(axisLine())
         append("<c:crossAx val=\"$Y_AXIS_ID\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>")
-        append(valueAxis(Y_AXIS_ID, X_AXIS_ID, "l", spec.yTitle, gridlines = true, crossBetween = "between"))
+        append(valueAxis(Y_AXIS_ID, X_AXIS_ID, "l", spec.yTitle, gridlines = true, crossBetween = "between", minZero = true))
     }
 
     private fun valueAxis(
@@ -92,8 +93,12 @@ internal object ChartXml {
         axisTitle: String,
         gridlines: Boolean,
         crossBetween: String = "midCat",
+        minZero: Boolean = false,
     ): String = buildString {
-        append("<c:valAx><c:axId val=\"$id\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/>")
+        // CT_Scaling 顺序：orientation, max, min。
+        append("<c:valAx><c:axId val=\"$id\"/><c:scaling><c:orientation val=\"minMax\"/>")
+        if (minZero) append("<c:min val=\"0\"/>")
+        append("</c:scaling><c:delete val=\"0\"/>")
         append("<c:axPos val=\"$position\"/>")
         if (gridlines) append("<c:majorGridlines><c:spPr><a:ln w=\"6350\"><a:solidFill><a:srgbClr val=\"E3E8EC\"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>")
         append(title(axisTitle, 1000))

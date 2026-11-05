@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chuankangkk.wrenchlift.BuildConfig
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
+import com.chuankangkk.wrenchlift.measurement.WrenchModel
 
 /** 设置（次级入口）：Wi‑Fi 名称引导、导出选项、配色、高级诊断、关于。端口只在高级诊断里出现（NET-03）。 */
 @Composable
@@ -52,7 +53,17 @@ fun SettingsScreen(
                     ToggleRow("同时导出 CSV", state.exportCsvToo, actions.setExportCsvToo, subtitle = "Excel（含图表）为主，CSV 可选", modifier = Modifier.fillMaxWidth().testTag("csv_toggle"))
                     Hairline()
                     SectionLabel("界面")
-                    ToggleRow("深色界面", state.darkTheme, actions.setDarkTheme, subtitle = "室内或平板可用；强光现场建议浅色", modifier = Modifier.fillMaxWidth().testTag("dark_toggle"))
+                    ToggleRow("深色界面", state.darkTheme, actions.setDarkTheme, subtitle = "默认；强光直射时可关闭改用浅色", modifier = Modifier.fillMaxWidth().testTag("dark_toggle"))
+                    Hairline()
+                    SectionLabel("扳手类型（确认机型后再改）")
+                    WrenchModel.entries.forEach { model ->
+                        ChoiceRow(
+                            title = model.label + if (model == WrenchModel.TORQUE) "（默认）" else "",
+                            selected = state.wrenchModel == model,
+                            onClick = { actions.setWrenchModel(model) },
+                            modifier = Modifier.testTag("model_${model.name}"),
+                        )
+                    }
                 }
             }
             Panel(Modifier.weight(1f).fillMaxHeight(), padding = PaddingValues(16.dp)) {
@@ -69,6 +80,22 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ChoiceRow(title: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val p = palette
+    Row(
+        modifier.fillMaxWidth().heightIn(min = WrenchDimens.touch).clip(WrenchDimens.buttonShape)
+            .clickable(role = Role.RadioButton, onClick = onClick).padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.RadioButton(
+            selected = selected, onClick = null,
+            colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = p.accent, unselectedColor = p.textTertiary),
+        )
+        Text(title, style = WrenchType.bodyStyle, color = if (selected) p.textPrimary else p.textSecondary, modifier = Modifier.padding(start = 6.dp))
     }
 }
 
@@ -111,6 +138,11 @@ fun DiagnosticsScreen(state: MeasurementState, actions: WorkerActions, onBack: (
                     InfoLine("探测", state.probeReport.summary)
                     if (state.probeReport.tried.isNotEmpty()) InfoLine("试过", state.probeReport.tried.joinToString("、"))
                     InfoLine("诊断", state.networkDiagnosticSummary)
+                    InfoLine("扳手状态", buildString {
+                        append(state.deviceErrorCode?.let { if (it == 0) "无错误" else "错误码 $it" } ?: "未收到")
+                        state.deviceReverseDirection?.let { append(if (it) " · 控制位：反向" else " · 控制位：正向") }
+                    })
+                    InfoLine("扳手类型", "${state.wrenchModel.label}（参数 ${state.wrenchModel.functionLabel}）")
                 }
             }
             Panel(Modifier.weight(1f).fillMaxHeight(), padding = PaddingValues(16.dp)) {

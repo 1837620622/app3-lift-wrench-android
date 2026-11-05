@@ -16,7 +16,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * 设计规范 §6.2 色板 token。两套择一为主题，同屏不混用；默认浅色工业中性（现场强光），设置里可切深色（室内/平板）。
+ * 设计规范 §6.2 色板 token。两套择一为主题，同屏不混用。
+ * 默认深色工业（与产品方 T 手把工业手机渲染一致）；强光现场可在设置里切浅色工业中性。
  */
 @Immutable
 data class WrenchPalette(
@@ -71,30 +72,31 @@ val LightIndustrialPalette = WrenchPalette(
     scrim = Color(0x661B1F24),
 )
 
+/** 默认主题：对齐产品方工作台渲染（近黑底、深色面板、发丝描边、青绿强调），色值取自设计规范 §6.2 深色工业。 */
 val DarkIndustrialPalette = WrenchPalette(
     isDark = true,
-    canvas = Color(0xFF121417),
-    panel = Color(0xFF1A1E24),
-    panelSunken = Color(0xFF15181D),
-    hairline = Color(0xFF2A313A),
+    canvas = Color(0xFF0D0F12),
+    panel = Color(0xFF161B20),
+    panelSunken = Color(0xFF1C242B),
+    hairline = Color(0xFF262E36),
     textPrimary = Color(0xFFF2F4F7),
     textSecondary = Color(0xFF9AA3AD),
-    textTertiary = Color(0xFF7A848F),
+    textTertiary = Color(0xFF6E7883),
     accent = Color(0xFF2BB7A9),
-    accentSoft = Color(0xFF16302D),
-    onAccent = Color(0xFF0E1114),
+    accentSoft = Color(0xFF14302D),
+    onAccent = Color(0xFF071311),
     danger = Color(0xFFE85D4C),
     dangerSoft = Color(0xFF3A1D1A),
     onDanger = Color(0xFFFFFFFF),
     ok = Color(0xFF3DDC97),
     warn = Color(0xFFE6B84A),
-    disabledFill = Color(0xFF22272E),
-    disabledText = Color(0xFF5E6873),
-    chartGrid = Color(0xFF242A31),
-    chartAxis = Color(0xFF6E7883),
+    disabledFill = Color(0xFF1A1F25),
+    disabledText = Color(0xFF55606B),
+    chartGrid = Color(0xFF1F262D),
+    chartAxis = Color(0xFF56616C),
     chartLine = Color(0xFF2BB7A9),
-    chartLineOld = Color(0xFF46505B),
-    scrim = Color(0x99000000),
+    chartLineOld = Color(0xFF3B4650),
+    scrim = Color(0xB3000000),
 )
 
 /** 启动页固定深炭底（SPL-01），与主题无关。 */
