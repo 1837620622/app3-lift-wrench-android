@@ -91,4 +91,9 @@ dependencies {
     testImplementation("androidx.room:room-testing:2.8.4")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("org.robolectric:robolectric:4.16.1")
+    // Robolectric 原生图形下跑 Compose：工人页交互断言 + 截图证据（不需要模拟器）。
+    testImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    // 仅测试：用 POI 读回导出的 xlsx，核对全量行数与原生图表引用（App 运行时不依赖 POI）。
+    testImplementation("org.apache.poi:poi-ooxml:5.4.1")
 }

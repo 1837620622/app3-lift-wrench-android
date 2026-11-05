@@ -1,0 +1,180 @@
+package com.chuankangkk.wrenchlift.measurement
+
+import android.app.Application
+import androidx.lifecycle.ViewModelStore
+import com.chuankangkk.wrenchlift.connection.ScriptedWrenchServer
+import com.chuankangkk.wrenchlift.protocol.TestPacketFactory
+import com.chuankangkk.wrenchlift.protocol.WrenchPacket
+import com.chuankangkk.wrenchlift.protocol.WrenchPacketBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import java.util.concurrent.Executors
+
+/**
+ * 正式控制面的协议时序（无硬件）：本机 TCP 扳手 + 真实 ViewModel。
+ * 覆盖：握手后缓存端点、未开远程拦截正/反转、先 0x11 再 0x01、0x15 自动 0x17、结束会话不发停止。
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
+class RemoteGateViewModelTest {
+    private lateinit var main: ExecutorCoroutineDispatcher
+    private lateinit var app: Application
+    private val store = ViewModelStore()
+
+    @Before fun setUp() {
+        main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        app = RuntimeEnvironment.getApplication()
+        app.getSharedPreferences("connection_preferences", 0).edit().clear().commit()
+    }
+
+    @After fun tearDown() {
+        store.clear()
+        app.getSharedPreferences("connection_preferences", 0).edit().clear().commit()
+        Dispatchers.resetMain()
+        main.close()
+    }
+
+    private fun viewModelFor(server: ScriptedWrenchServer): MeasurementViewModel {
+        app.getSharedPreferences("connection_preferences", 0).edit()
+            .putString(MeasurementViewModel.PREF_LAST_GOOD_HOST, server.endpoint.host)
+            .putString(MeasurementViewModel.PREF_LAST_GOOD_PORT, server.endpoint.port.toString())
+            .commit()
+        return MeasurementViewModel(app, autoConnectOnWifi = false, handshakeTimeoutMillis = 1_500).also {
+            store.put("vm-${server.port}", it)
+        }
+    }
+
+    private fun awaitCondition(timeoutMillis: Long = 8_000, message: String, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (System.currentTimeMillis() < deadline) {
+            if (condition()) return
+            Thread.sleep(20)
+        }
+        throw AssertionError("等待超时：$message")
+    }
+
+    private fun ScriptedWrenchServer.frames(code: Int) = received.filter { it.functionCode == code }
+
+    @Test fun motionNeedsRemoteFirstAndEndingSessionDoesNotStopWrench() {
+        ScriptedWrenchServer().use { wrench ->
+            val vm = viewModelFor(wrench)
+            vm.connectTcp()
+            awaitCondition(message = "握手成功") { vm.state.value.linkPhase == LinkPhase.READY }
+            assertEquals(wrench.endpoint, vm.state.value.lastGoodEndpoint)
+            assertEquals("20261105 01".replace(" ", ""), vm.state.value.deviceSn)
+            assertFalse("连接成功不得自动开远程", vm.state.value.remoteEnabled)
+            assertTrue(wrench.frames(WrenchPacket.FUNC_REMOTE_CONTROL).isEmpty())
+
+            // 未开远程：正/反转在 App 侧被拦截，扳手收不到 0x01。
+            vm.startForward()
+            vm.startReverse()
+            awaitCondition(message = "拦截提示") { vm.state.value.controlMessage == "请先启用远程控制" }
+            Thread.sleep(300)
+            assertTrue(wrench.frames(WrenchPacket.FUNC_STOP_RUN).isEmpty())
+
+            vm.enableRemoteControl()
+            awaitCondition(message = "远程已启用") { vm.state.value.remoteEnabled }
+            vm.startForward()
+            awaitCondition(message = "收到正转") { wrench.frames(WrenchPacket.FUNC_STOP_RUN).isNotEmpty() }
+            val codes = wrench.functionCodes()
+            assertTrue("0x11 必须先于 0x01", codes.indexOf(WrenchPacket.FUNC_REMOTE_CONTROL) < codes.indexOf(WrenchPacket.FUNC_STOP_RUN))
+            assertEquals(0x01, wrench.frames(WrenchPacket.FUNC_REMOTE_CONTROL).single().payload.single().toInt())
+            assertEquals(0x01, wrench.frames(WrenchPacket.FUNC_STOP_RUN).single().payload.single().toInt())
+            assertEquals(MotionCommand.FORWARD, vm.state.value.motion)
+
+            // 运行结束结果帧：App 自动回 0x17，运动状态回到已停止。
+            wrench.send(TestPacketFactory.resultFrame(0x00, "0000000000", 1, 182, 88))
+            awaitCondition(message = "自动 0x17") { wrench.frames(WrenchPacket.FUNC_RESULT_CONFIRM).isNotEmpty() }
+            awaitCondition(message = "结果后已停止") { vm.state.value.motion == MotionCommand.STOPPED }
+
+            // 停止始终可发。
+            vm.stopWrench()
+            awaitCondition(message = "收到停止") { wrench.frames(WrenchPacket.FUNC_STOP_RUN).size == 2 }
+            assertEquals(0x00, wrench.frames(WrenchPacket.FUNC_STOP_RUN).last().payload.single().toInt())
+
+            // 结束会话 ≠ 停止扳手：不得追加 0x01。
+            val stopFramesBefore = wrench.frames(WrenchPacket.FUNC_STOP_RUN).size
+            vm.endSession()
+            awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE && !vm.state.value.connectionState.isOnline }
+            Thread.sleep(200)
+            assertEquals(stopFramesBefore, wrench.frames(WrenchPacket.FUNC_STOP_RUN).size)
+            assertFalse(vm.state.value.autoConnect)
+            assertFalse(vm.state.value.remoteEnabled)
+        }
+    }
+
+    @Test fun endSessionWithStopFirstSendsExplicitStop() {
+        ScriptedWrenchServer().use { wrench ->
+            val vm = viewModelFor(wrench)
+            vm.connectTcp()
+            awaitCondition(message = "握手成功") { vm.state.value.linkPhase == LinkPhase.READY }
+            vm.endSession(stopWrenchFirst = true)
+            awaitCondition(message = "收到停止") { wrench.frames(WrenchPacket.FUNC_STOP_RUN).isNotEmpty() }
+            assertEquals(0x00, wrench.frames(WrenchPacket.FUNC_STOP_RUN).single().payload.single().toInt())
+            awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE }
+        }
+    }
+
+    @Test fun exportWritesRealXlsxWithAllPersistedPoints() {
+        ScriptedWrenchServer().use { wrench ->
+            val vm = viewModelFor(wrench)
+            vm.connectTcp()
+            awaitCondition(message = "握手成功") { vm.state.value.linkPhase == LinkPhase.READY }
+            val payload = ByteArray(12 + 4 * 25)
+            for (i in 0 until 25) {
+                payload[13 + i * 4] = (i * 7).toByte()
+                payload[15 + i * 4] = i.toByte()
+            }
+            repeat(3) { wrench.send(WrenchPacketBuilder.build(WrenchPacket.FUNC_TORQUE_ANGLE, payload)) }
+            awaitCondition(message = "75 点入库") { vm.state.value.persistedPointCount == 75L }
+            vm.exportCurrent()
+            awaitCondition(timeoutMillis = 15_000, message = "导出完成") { vm.state.value.lastExport != null && !vm.state.value.exportInProgress }
+            val outcome = vm.state.value.lastExport!!
+            assertTrue(outcome.message, outcome.success)
+            assertEquals("导出完成（含图表）", outcome.message)
+            assertTrue(outcome.displayPath.endsWith(".xlsx"))
+            vm.endSession()
+            awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE }
+        }
+    }
+
+    @Test fun processFramesFeedAdaptiveDisplayWindowBeyondFiftyPoints() {
+        ScriptedWrenchServer().use { wrench ->
+            val vm = viewModelFor(wrench)
+            vm.connectTcp()
+            awaitCondition(message = "握手成功") { vm.state.value.linkPhase == LinkPhase.READY }
+            repeat(4) { frame ->
+                val payload = ByteArray(12 + 4 * 30)
+                for (i in 0 until 30) {
+                    val torque = frame * 30 + i
+                    val angle = frame * 30 + i
+                    payload[12 + i * 4] = (torque ushr 8).toByte(); payload[13 + i * 4] = torque.toByte()
+                    payload[14 + i * 4] = (angle ushr 8).toByte(); payload[15 + i * 4] = angle.toByte()
+                }
+                wrench.send(WrenchPacketBuilder.build(WrenchPacket.FUNC_TORQUE_ANGLE, payload))
+            }
+            awaitCondition(message = "120 点入库") { vm.state.value.persistedPointCount == 120L }
+            // 显示窗口不再死锁最近 50 点。
+            assertEquals(120, vm.state.value.recentPoints.size)
+            assertEquals(119.0, vm.state.value.currentTorqueNm, 0.0)
+            vm.endSession()
+            awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE }
+        }
+    }
+}

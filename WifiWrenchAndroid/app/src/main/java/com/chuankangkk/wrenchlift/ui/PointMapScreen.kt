@@ -113,6 +113,6 @@ fun PointMapScreen(state: MeasurementState) {
         }
         InfoLine("当前板号", state.session.slabNo)
         InfoLine("当前点位", state.session.pointNo)
-        InfoLine("提示", "确认平衡点只标记最近采样点；删除平衡点只撤销标记，原始数据保留。")
+        InfoLine("提示", "标记参考点只标记最近采样点（未确认平衡）；删除只撤销标记，原始数据保留。")
     }
 }

@@ -3,13 +3,21 @@ package com.chuankangkk.wrenchlift.measurement
 import android.app.Application
 import android.content.ContentValues
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.chuankangkk.wrenchlift.BuildConfig
+import com.chuankangkk.wrenchlift.connection.AdaptiveConnector
 import com.chuankangkk.wrenchlift.connection.ConnectionState
+import com.chuankangkk.wrenchlift.connection.EndpointPlanner
+import com.chuankangkk.wrenchlift.connection.ProbeOutcome
+import com.chuankangkk.wrenchlift.connection.WifiNetworkTracker
+import com.chuankangkk.wrenchlift.connection.WrenchEndpoint
 import com.chuankangkk.wrenchlift.connection.NetworkDiagnosticResult
 import com.chuankangkk.wrenchlift.connection.NetworkDiagnostics
 import com.chuankangkk.wrenchlift.connection.TcpWrenchClient
@@ -17,6 +25,9 @@ import com.chuankangkk.wrenchlift.connection.WrenchConnection
 import com.chuankangkk.wrenchlift.data.MeasurementRepository
 import com.chuankangkk.wrenchlift.data.TorquePointEntity
 import com.chuankangkk.wrenchlift.data.WrenchDatabase
+import com.chuankangkk.wrenchlift.measurement.export.ProcessRow
+import com.chuankangkk.wrenchlift.measurement.export.SessionWorkbookWriter
+import com.chuankangkk.wrenchlift.measurement.export.WorkbookSummary
 import com.chuankangkk.wrenchlift.protocol.AckDecoder
 import com.chuankangkk.wrenchlift.protocol.WifiWrenchParameterSettings
 import com.chuankangkk.wrenchlift.protocol.BatteryDecoder
@@ -33,6 +44,8 @@ import com.chuankangkk.wrenchlift.protocol.WrenchPacket
 import com.chuankangkk.wrenchlift.protocol.WrenchPacketBuilder
 import com.chuankangkk.wrenchlift.protocol.TorqueAngleDecoder
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancelAndJoin
@@ -48,21 +61,41 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+import java.io.OutputStream
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-class MeasurementViewModel(application: Application) : AndroidViewModel(application) {
+class MeasurementViewModel @JvmOverloads constructor(
+    application: Application,
+    /** 连上 Wi‑Fi 后自动探测扳手；单元测试里关掉以免依赖系统网络回调。 */
+    private val autoConnectOnWifi: Boolean = true,
+    private val handshakeTimeoutMillis: Long = 1_800L,
+) : AndroidViewModel(application) {
     private val repository = MeasurementRepository(
         WrenchDatabase.getInstance(application).measurementDao(),
     )
     private val uncalibratedCalculator: ForceCalculator = CalibrationForceCalculator(emptyList())
-    private val networkDiagnostics = NetworkDiagnostics(application)
+    private val wifiTracker = WifiNetworkTracker(application)
+    private val networkDiagnostics = NetworkDiagnostics(application, socketFactory = wifiTracker::newSocket)
+    private val connectionFactory: () -> WrenchConnection = {
+        TcpWrenchClient(connectTimeoutMillis = PROBE_CONNECT_TIMEOUT_MILLIS, socketFactory = wifiTracker::newSocket)
+    }
 
     private val connectionPreferences = application.getSharedPreferences("connection_preferences", android.content.Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(MeasurementState(
         targetWifiName = connectionPreferences.getString("target_wifi_name", "").orEmpty(),
-        host = connectionPreferences.getString("host", "192.168.4.1").orEmpty(),
-        port = connectionPreferences.getString("port", "7888").orEmpty(),
+        host = connectionPreferences.getString("host", WrenchEndpoint.DEFAULT_HOST).orEmpty(),
+        port = connectionPreferences.getString("port", WrenchEndpoint.DEFAULT_PORT.toString()).orEmpty(),
+        lastGoodEndpoint = WrenchEndpoint.parse(
+            connectionPreferences.getString(PREF_LAST_GOOD_HOST, null),
+            connectionPreferences.getString(PREF_LAST_GOOD_PORT, null),
+        ),
+        session = MeasurementSession(
+            slabNo = connectionPreferences.getString(PREF_SLAB, null) ?: MeasurementSession().slabNo,
+            pointNo = connectionPreferences.getString(PREF_POINT, null) ?: MeasurementSession().pointNo,
+        ),
+        exportCsvToo = connectionPreferences.getBoolean(PREF_EXPORT_CSV, false),
+        darkTheme = connectionPreferences.getBoolean(PREF_DARK, false),
     ))
     val state: StateFlow<MeasurementState> = _state.asStateFlow()
 
@@ -70,20 +103,44 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
     private var stateJob: Job? = null
     private var packetJob: Job? = null
     private var connectJob: Job? = null
+    private var retryJob: Job? = null
+    private var retryCount = 0
     private var sessionId: Long? = null
     private var connectionMode: String = "未连接"
+    private var lastControl: String = ""
     private val sessionMutex = Mutex()
     private val measurementMutex = Mutex()
     private val historyLimit = MutableStateFlow(20)
 
     init {
-        bindConnection(connection)
+        attachPackets(connection)
         viewModelScope.launch {
             historyLimit.collectLatest { limit ->
                 repository.observeRecentSessions(limit = limit).collect { sessions ->
                     _state.update { it.copy(recentSessions = sessions) }
                 }
             }
+        }
+        if (autoConnectOnWifi) {
+            viewModelScope.launch {
+                wifiTracker.wifiAvailable.collect { available -> onWifiChanged(available) }
+            }
+        }
+    }
+
+    private suspend fun onWifiChanged(available: Boolean) {
+        _state.update { it.copy(wifiAvailable = available) }
+        runCatching { refreshWifiInfo() }
+        val current = _state.value
+        if (available) {
+            val idle = current.linkPhase in setOf(LinkPhase.IDLE, LinkPhase.NO_WIFI, LinkPhase.FAILED, LinkPhase.DROPPED)
+            if (current.autoConnect && idle && connectJob?.isActive != true) {
+                retryCount = 0
+                delay(WIFI_SETTLE_MILLIS)
+                startProbe(manual = null)
+            }
+        } else if (!current.connectionState.isOnline && current.linkPhase != LinkPhase.PROBING && current.autoConnect) {
+            _state.update { it.copy(linkPhase = LinkPhase.NO_WIFI) }
         }
     }
 
@@ -105,11 +162,33 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun updateSlabNo(value: String) {
-        _state.update { it.copy(session = it.session.copy(slabNo = value)) }
+        val slab = value.take(32)
+        _state.update { it.copy(session = it.session.copy(slabNo = slab)) }
+        connectionPreferences.edit().putString(PREF_SLAB, slab).apply()
     }
 
     fun updatePointNo(value: String) {
-        _state.update { it.copy(session = it.session.copy(pointNo = value)) }
+        val point = value.take(32)
+        _state.update { it.copy(session = it.session.copy(pointNo = point)) }
+        connectionPreferences.edit().putString(PREF_POINT, point).apply()
+    }
+
+    fun setExportCsvToo(enabled: Boolean) {
+        _state.update { it.copy(exportCsvToo = enabled) }
+        connectionPreferences.edit().putBoolean(PREF_EXPORT_CSV, enabled).apply()
+    }
+
+    fun setDarkTheme(enabled: Boolean) {
+        _state.update { it.copy(darkTheme = enabled) }
+        connectionPreferences.edit().putBoolean(PREF_DARK, enabled).apply()
+    }
+
+    fun clearLastExport() {
+        _state.update { it.copy(lastExport = null) }
+    }
+
+    fun clearControlMessage() {
+        _state.update { it.copy(controlMessage = "") }
     }
 
     fun updateParameterMode(mode: Int) {
@@ -150,65 +229,222 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         _state.update { it.copy(parameterAngleLower = value.sanitizeDecimalText()) }
     }
 
-    fun connectTcp() {
-        if (connectJob?.isActive == true || _state.value.connectionState.isOnline || _state.value.connectionState is ConnectionState.Connecting) return
-        _state.update { it.copy(connectionState = ConnectionState.Connecting) }
+    /** 正式入口：后台自适应探测（缓存 → 默认 192.168.4.1:7888 → 候选 → 子网短扫）。 */
+    fun connectTcp() = startProbe(manual = null)
+
+    /** 高级诊断：按手动填写的 host:port 优先连接，失败后仍走自适应探测。 */
+    fun connectManualEndpoint() {
+        val manual = WrenchEndpoint.parse(_state.value.host, _state.value.port)
+        if (manual == null) {
+            _state.update { it.copy(networkDiagnosticSummary = "地址或端口格式不对") }
+            return
+        }
+        startProbe(manual)
+    }
+
+    /** 测点/记录页「开始测量」：保存板号测点、建新记录并自动连扳手。 */
+    fun startMeasurement(slabNo: String, pointNo: String) {
+        if (_state.value.connectionState.isOnline) return
+        // 先写测点：若后台探测已在进行，建链时新会话会用这里的板号/测点。
+        updateSlabNo(slabNo.trim().ifBlank { MeasurementSession().slabNo })
+        updatePointNo(pointNo.trim().ifBlank { MeasurementSession().pointNo })
+        retryCount = 0
+        if (connectJob?.isActive == true) {
+            _state.update { it.copy(autoConnect = true) }
+            return
+        }
+        startProbe(manual = null)
+    }
+
+    private fun startProbe(manual: WrenchEndpoint?) {
+        if (connectJob?.isActive == true || _state.value.connectionState.isOnline) return
+        retryJob?.cancel()
+        _state.update {
+            it.copy(
+                connectionState = ConnectionState.Connecting,
+                linkPhase = LinkPhase.PROBING,
+                autoConnect = true,
+                probeReport = ProbeReport(summary = "正在探测"),
+            )
+        }
         connectJob = viewModelScope.launch {
             try {
-            measurementMutex.withLock {
-                // 每次重新连接单独建会话，避免更换扳手或测点后混入上一台的数据。
-                packetJob?.cancelAndJoin()
-                val old = _state.value
-                sessionId?.let { persistSessionSummary(it, old.lastResult?.status?.label ?: "采集结束", old.lastResult, old.lastPulseResult) }
-                sessionId = null
-                _state.value = MeasurementState(
-                    targetWifiName = old.targetWifiName, host = old.host, port = old.port,
-                    session = old.session.copy(deviceSn = "未知设备"), recentSessions = old.recentSessions,
-                    connectionState = ConnectionState.Connecting,
-                )
-            }
-            val current = _state.value
-            val portNumber = current.port.toIntOrNull() ?: 7888
-            val requestedHost = current.host.ifBlank { "192.168.4.1" }
-            val diagnostic = diagnoseNetwork(requestedHost, portNumber, checkPorts = true)
-            var activeHost = diagnostic.suggestedHost.ifBlank { requestedHost }
-            var activePort = diagnostic.suggestedPort
-            connectionMode = "TCP"
-            switchConnection(TcpWrenchClient())
-            ensureSession("TCP")
-            _state.update { it.copy(host = activeHost, port = activePort.toString()) }
-            appendLog("开始连接 $activeHost:$activePort")
-            connection.connect(activeHost, activePort)
-
-            if (
-                connection.connectionState.value is ConnectionState.Error &&
-                activeHost == "192.168.4.1" &&
-                diagnostic.gatewayIp != "--" &&
-                diagnostic.gatewayIp != activeHost
-            ) {
-                activeHost = diagnostic.gatewayIp
-                appendLog("默认地址失败，尝试默认网关 $activeHost:$activePort")
-                switchConnection(TcpWrenchClient())
-                _state.update { it.copy(host = activeHost) }
-                connection.connect(activeHost, activePort)
-            }
-
-            if (connection.connectionState.value is ConnectionState.Connected) {
-                sendConnectionProbe()
-            } else {
-                appendLog("连接未成功：${diagnostic.summary}")
-            }
+                measurementMutex.withLock {
+                    // 每次重新连接单独建会话，避免更换扳手或测点后混入上一台的数据。
+                    stateJob?.cancel()
+                    packetJob?.cancelAndJoin()
+                    val old = _state.value
+                    sessionId?.let { persistSessionSummary(it, old.lastResult?.status?.label ?: "采集结束", old.lastResult, old.lastPulseResult) }
+                    sessionId = null
+                    _state.value = old.freshSessionState()
+                }
+                runCatching { connection.disconnect() }
+                val outcome = probeEndpoints(manual)
+                when (outcome) {
+                    is ProbeOutcome.Ready -> adoptConnection(outcome.connection, outcome.endpoint, handshake = true, tried = outcome.tried)
+                    is ProbeOutcome.TcpOnly -> adoptConnection(outcome.connection, outcome.endpoint, handshake = false, tried = outcome.tried)
+                    is ProbeOutcome.Failed -> onProbeFailed(outcome.tried, "没有找到能回话的扳手")
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _state.update { it.copy(connectionState = ConnectionState.Error(error.message ?: "连接失败")) }
-                appendLog("连接失败：${error.message}")
+                onProbeFailed(emptyList(), error.message ?: "连接失败")
             }
         }
     }
 
-    fun disconnect() {
+    private suspend fun probeEndpoints(manual: WrenchEndpoint?): ProbeOutcome {
+        val lastGood = _state.value.lastGoodEndpoint
+        val savedManual = WrenchEndpoint.parse(
+            connectionPreferences.getString("host", null),
+            connectionPreferences.getString("port", null),
+        )
+        var info: NetworkDiagnosticResult? = null
+        suspend fun networkInfo(): NetworkDiagnosticResult =
+            info ?: networkDiagnostics.diagnose(WrenchEndpoint.DEFAULT_HOST, WrenchEndpoint.DEFAULT_PORT, checkPorts = false)
+                .also { result ->
+                    info = result
+                    applyNetworkInfo(result)
+                }
+        val connector = AdaptiveConnector(
+            connectionFactory = connectionFactory,
+            handshakeTimeoutMillis = handshakeTimeoutMillis,
+            onProgress = { endpoint ->
+                _state.update { it.copy(probeReport = it.probeReport.copy(summary = "正在尝试 $endpoint")) }
+            },
+        )
+        val outcome = connector.probe(
+            primary = (listOfNotNull(manual) + EndpointPlanner.primary(lastGood)).distinct(),
+            candidates = { tried ->
+                val network = networkInfo()
+                val planned = EndpointPlanner.candidates(lastGood, savedManual, network.gatewayIp, network.localIp)
+                    .filterNot { it in tried }
+                networkDiagnostics.openEndpoints(planned, timeout = CANDIDATE_CHECK_TIMEOUT_MILLIS)
+            },
+            subnetScan = { tried ->
+                val network = networkInfo()
+                val ports = (listOfNotNull(lastGood?.port, savedManual?.port) + EndpointPlanner.CANDIDATE_PORTS).distinct()
+                networkDiagnostics.scanSubnet(network.localIp, ports, exclude = tried)
+            },
+            attach = { candidate -> attachPackets(candidate) },
+        )
+        if (info == null) runCatching { networkInfo() }
+        appendLog("自适应探测：试过 ${outcome.tried.joinToString()}")
+        return outcome
+    }
+
+    private suspend fun adoptConnection(
+        newConnection: WrenchConnection,
+        endpoint: WrenchEndpoint,
+        handshake: Boolean,
+        tried: List<WrenchEndpoint>,
+    ) {
+        connection = newConnection
+        connectionMode = "TCP"
+        stateJob?.cancel()
+        stateJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            newConnection.connectionState.collect { connectionState ->
+                _state.update { it.copy(connectionState = connectionState) }
+                if (connectionState !is ConnectionState.Connected) onLinkLost()
+            }
+        }
+        val id = ensureSession("TCP")
+        _state.update {
+            it.copy(
+                activeEndpoint = endpoint,
+                linkPhase = if (handshake) LinkPhase.READY else LinkPhase.WAITING_REPLY,
+                currentSessionId = id,
+                remoteEnabled = false,
+                motion = MotionCommand.NONE,
+                probeReport = ProbeReport(
+                    tried = tried,
+                    selected = endpoint,
+                    handshake = handshake,
+                    summary = if (handshake) "握手成功 $endpoint" else "TCP 已连 $endpoint，等待扳手首帧",
+                ),
+                lastCommandLabel = "连接检查和设备编号查询",
+                lastSentHex = WrenchPacketBuilder.querySn().rawHex(),
+            )
+        }
+        if (handshake) rememberLastGood(endpoint)
+        if (!newConnection.connectionState.value.isOnline) {
+            // 建链与接管之间 socket 已断：按断线处理，不显示「已连上」。
+            onLinkLost()
+            return
+        }
+        if (!handshake) {
+            // TCP 能连但还没回话：补发一次心跳和查 SN，首帧到达时 handlePacket 会确认握手。
+            runCatching {
+                newConnection.send(WrenchPacketBuilder.heartbeat())
+                newConnection.send(WrenchPacketBuilder.querySn())
+            }
+        }
+        appendLog(if (handshake) "已连上扳手（$endpoint）" else "已接通 $endpoint，等待扳手回话")
+    }
+
+    private fun rememberLastGood(endpoint: WrenchEndpoint) {
+        retryCount = 0
+        connectionPreferences.edit()
+            .putString(PREF_LAST_GOOD_HOST, endpoint.host)
+            .putString(PREF_LAST_GOOD_PORT, endpoint.port.toString())
+            .apply()
+        _state.update { it.copy(lastGoodEndpoint = endpoint) }
+    }
+
+    private fun onProbeFailed(tried: List<WrenchEndpoint>, reason: String) {
+        _state.update {
+            it.copy(
+                connectionState = ConnectionState.Error(reason),
+                linkPhase = if (it.wifiAvailable || !autoConnectOnWifi) LinkPhase.FAILED else LinkPhase.NO_WIFI,
+                probeReport = ProbeReport(tried = tried, summary = "$reason（试过 ${tried.size} 个端点）"),
+            )
+        }
+        appendLog("连接失败：$reason")
+        scheduleRetry()
+    }
+
+    private fun onLinkLost() {
+        val current = _state.value
+        if (current.linkPhase != LinkPhase.READY && current.linkPhase != LinkPhase.WAITING_REPLY) return
+        _state.update { it.copy(linkPhase = LinkPhase.DROPPED, remoteEnabled = false) }
+        appendLog("连接已断开")
         viewModelScope.launch {
+            measurementMutex.withLock {
+                sessionId?.let { id ->
+                    val latest = _state.value
+                    persistSessionSummary(id, latest.lastResult?.status?.label ?: "采集结束", latest.lastResult, latest.lastPulseResult)
+                }
+            }
+        }
+        scheduleRetry()
+    }
+
+    private fun scheduleRetry() {
+        if (!_state.value.autoConnect || retryCount >= MAX_AUTO_RETRIES) return
+        if (autoConnectOnWifi && !_state.value.wifiAvailable) return
+        retryJob?.cancel()
+        retryJob = viewModelScope.launch {
+            delay(RETRY_DELAY_MILLIS)
+            retryCount += 1
+            startProbe(manual = null)
+        }
+    }
+
+    /** 结束会话：只断开本机会话与采集，不会自动停止扳手（SAFE-05）。可选先发 0x01 停止。 */
+    fun endSession(stopWrenchFirst: Boolean = false) {
+        viewModelScope.launch {
+            var stopSent = false
+            if (stopWrenchFirst && _state.value.connectionState.isOnline) {
+                stopSent = runCatching { connection.send(WrenchPacketBuilder.stop()) }.isSuccess
+                if (stopSent) {
+                    _state.update { it.copy(motion = MotionCommand.STOPPED, lastCommandLabel = "停止扳手", lastSentHex = WrenchPacketBuilder.stop().rawHex()) }
+                    appendLog("结束前已发送停止扳手")
+                    delay(150)
+                }
+            }
+            retryJob?.cancel()
+            _state.update { it.copy(autoConnect = false, linkPhase = LinkPhase.IDLE) }
+            connectJob?.cancelAndJoin()
             connection.disconnect()
             measurementMutex.withLock {
                 sessionId?.let { id ->
@@ -216,9 +452,19 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                     persistSessionSummary(id, current.lastResult?.status?.label ?: "采集结束", current.lastResult, current.lastPulseResult)
                 }
             }
-            appendLog("连接已断开")
+            _state.update {
+                it.copy(
+                    linkPhase = LinkPhase.IDLE,
+                    remoteEnabled = false,
+                    controlMessage = if (stopSent) "已发送停止，并结束会话" else "会话已结束（扳手不会因此自动停止）",
+                )
+            }
+            appendLog("会话已结束")
         }
     }
+
+    /** 兼容调试控制台：断开 = 结束会话（不发停止）。 */
+    fun disconnect() = endSession(stopWrenchFirst = false)
 
     fun openWifiSettings() {
         runCatching {
@@ -241,36 +487,135 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun enableRemoteControl() = sendCommand(WrenchPacketBuilder.enableRemoteControl(), "手机控制已开启")
+    /** 0x11 开远程。工人显式操作，连接成功后不会自动发送（SAFE-02）。 */
+    fun enableRemoteControl() {
+        if (!RemoteGate.canToggleRemote(_state.value)) {
+            controlFeedback("未连上扳手，无法开启远程")
+            return
+        }
+        sendCommand(WrenchPacketBuilder.enableRemoteControl(), LABEL_REMOTE_ON) {
+            it.copy(remoteEnabled = true, motion = MotionCommand.NONE, controlMessage = "远程已启用")
+        }
+    }
 
-    fun disableRemoteControl() = sendCommand(WrenchPacketBuilder.disableRemoteControl(), "手机控制已关闭")
+    /** 0x11 关远程；若 App 最后发的是正/反转，先补发 0x01 停止再关。 */
+    fun disableRemoteControl() {
+        val current = _state.value
+        if (!current.connectionState.isOnline) {
+            _state.update { it.copy(remoteEnabled = false) }
+            return
+        }
+        viewModelScope.launch {
+            if (current.motion == MotionCommand.FORWARD || current.motion == MotionCommand.REVERSE) {
+                val stop = WrenchPacketBuilder.stop()
+                if (runCatching { connection.send(stop) }.isSuccess) {
+                    _state.update { it.copy(motion = MotionCommand.STOPPED, lastCommandLabel = LABEL_STOP, lastSentHex = stop.rawHex()) }
+                    appendLog("关远程前已发送停止")
+                }
+            }
+            sendCommand(WrenchPacketBuilder.disableRemoteControl(), LABEL_REMOTE_OFF) {
+                it.copy(remoteEnabled = false, controlMessage = "远程已关闭")
+            }
+        }
+    }
 
-    fun startForward() = sendCommand(WrenchPacketBuilder.startForward(), "正向顶升")
+    /** 0x01 正转：必须已开远程；界面另有二次确认（SAFE-01/03）。 */
+    fun startForward() = move(MotionCommand.FORWARD)
 
-    fun startReverse() = sendCommand(WrenchPacketBuilder.startReverse(), "反向回退")
+    /** 0x01 反转：必须已开远程；界面另有二次确认。 */
+    fun startReverse() = move(MotionCommand.REVERSE)
 
-    fun stopWrench() = sendCommand(WrenchPacketBuilder.stop(), "停止扳手")
+    private fun move(direction: MotionCommand) {
+        val current = _state.value
+        val label = if (direction == MotionCommand.FORWARD) LABEL_FORWARD else LABEL_REVERSE
+        if (!current.connectionState.isOnline) {
+            controlFeedback("未连上扳手")
+            return
+        }
+        if (!RemoteGate.canMove(current)) {
+            controlFeedback("请先启用远程控制")
+            appendLog("已拦截$label：远程未启用，不发送")
+            return
+        }
+        val packet = if (direction == MotionCommand.FORWARD) WrenchPacketBuilder.startForward() else WrenchPacketBuilder.startReverse()
+        sendCommand(packet, label) {
+            it.copy(motion = direction, controlMessage = if (direction == MotionCommand.FORWARD) "已发送正转" else "已发送反转")
+        }
+    }
+
+    /** 0x01 停止：任何时候都可点；离线时只能提示到扳手上停止。 */
+    fun stopWrench() {
+        if (!RemoteGate.canSendStop(_state.value)) {
+            controlFeedback("未连上扳手，停止发不出去，请直接在扳手上停止")
+            return
+        }
+        sendCommand(WrenchPacketBuilder.stop(), LABEL_STOP) {
+            it.copy(motion = MotionCommand.STOPPED, controlMessage = "已发送停止")
+        }
+    }
+
+    private fun controlFeedback(message: String) {
+        _state.update { it.copy(controlMessage = message) }
+    }
+
+    /** 参数侧滑「保存」：确认后把草稿写入状态并下发 0x10。 */
+    fun writeParameters(draft: ParameterDraft) {
+        _state.update {
+            it.copy(
+                parameterMode = draft.mode,
+                parameterTargetTorque = draft.targetTorque.sanitizeUIntText(),
+                parameterTorqueLower = draft.torqueLower.sanitizeUIntText(),
+                parameterTorqueUpper = draft.torqueUpper.sanitizeUIntText(),
+                parameterTargetAngle = if (draft.mode == WifiWrenchParameterSettings.MODE_M1) "0" else draft.targetAngle.sanitizeDecimalText(),
+                parameterAngleUpper = draft.angleUpper.sanitizeDecimalText(),
+                parameterAngleLower = draft.angleLower.sanitizeDecimalText(),
+            )
+        }
+        writeParameterSettings()
+    }
 
     fun writeParameterSettings() {
+        if (!RemoteGate.canWriteParameters(_state.value)) {
+            _state.update { it.copy(parameterStatus = "未连上扳手，参数未写入") }
+            return
+        }
         val settings = buildParameterSettings() ?: return
         val statusText =
             "已发送 ${settings.modeLabel()}：目标扭矩 ${settings.targetTorqueNm} Nm，目标角度 %.1f°".format(settings.targetAngleDeg)
-        sendCommand(WrenchPacketBuilder.parameterSet(settings), "写入扳手参数") {
+        sendCommand(WrenchPacketBuilder.parameterSet(settings), LABEL_PARAMS) {
             it.copy(
                 parameterStatus = statusText,
+                controlMessage = "参数已发送",
             )
         }
     }
 
     fun sendHeartbeat() {
         viewModelScope.launch {
-            val current = _state.value
-            val portNumber = current.port.toIntOrNull() ?: 7888
-            diagnoseNetwork(current.host.ifBlank { "192.168.4.1" }, portNumber, checkPorts = true)
+            runDiagnosticsInternal()
             if (_state.value.connectionState is ConnectionState.Connected) {
                 sendCommand(WrenchPacketBuilder.heartbeat(), "检查连接")
             }
         }
+    }
+
+    /** 高级诊断：检查手动端点与候选端口可达性（只做报告，不改缓存）。 */
+    fun runDiagnostics() {
+        viewModelScope.launch { runDiagnosticsInternal() }
+    }
+
+    private suspend fun runDiagnosticsInternal() {
+        val current = _state.value
+        val endpoint = WrenchEndpoint.parse(current.host, current.port) ?: WrenchEndpoint.DEFAULT
+        diagnoseNetwork(endpoint.host, endpoint.port, checkPorts = true)
+    }
+
+    fun refreshWifiInfoAsync() {
+        viewModelScope.launch { runCatching { refreshWifiInfo() } }
+    }
+
+    private suspend fun refreshWifiInfo() {
+        applyNetworkInfo(networkDiagnostics.diagnose(WrenchEndpoint.DEFAULT_HOST, WrenchEndpoint.DEFAULT_PORT, checkPorts = false))
     }
 
     fun saveCurrentRecord() {
@@ -303,8 +648,11 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                 packetJob?.cancelAndJoin()
                 sessionId = null
                 val old = _state.value
-                _state.value = MeasurementState(targetWifiName = old.targetWifiName, host = old.host, port = old.port, session = old.session,
-                    recentSessions = old.recentSessions, saveStatus = "新记录已就绪，请检查测点后连接")
+                _state.value = old.freshSessionState().copy(
+                    connectionState = old.connectionState,
+                    linkPhase = old.linkPhase,
+                    saveStatus = "新记录已就绪，请检查测点后连接",
+                )
             }
         }
     }
@@ -318,12 +666,177 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         exportSessionCsv(id)
     }
 
+    /** 正式导出：当前记录 → xlsx（含原生 Excel 图）；设置里勾选后同时导出 CSV。 */
+    fun exportCurrent() {
+        val id = sessionId
+        if (id == null) {
+            _state.update { it.copy(lastExport = ExportOutcome(false, "还没有测量数据可导出")) }
+            return
+        }
+        exportSession(id)
+    }
+
+    fun exportSession(id: Long) {
+        viewModelScope.launch {
+            if (_state.value.exportInProgress) return@launch
+            _state.update { it.copy(exportInProgress = true, lastExport = null) }
+            try {
+                val outcome = withContext(Dispatchers.IO) { exportWorkbook(id) }
+                _state.update { it.copy(lastExport = outcome, saveStatus = "${outcome.message} · ${outcome.displayPath}") }
+                appendLog("Excel 已导出：${outcome.displayPath}")
+                if (_state.value.exportCsvToo) exportSessionCsvBlocking(id)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _state.update {
+                    it.copy(
+                        lastExport = ExportOutcome(false, "导出失败，请重试或检查存储空间", displayPath = error.message.orEmpty()),
+                        saveStatus = "Excel 导出失败：${error.message}",
+                    )
+                }
+                appendLog("Excel 导出失败：${error.message}")
+            } finally {
+                _state.update { it.copy(exportInProgress = false) }
+            }
+        }
+    }
+
+    private suspend fun exportWorkbook(id: Long): ExportOutcome {
+        // 等当前帧完整入库后冻结上界；之后收到的点留待下一次导出。
+        val (record, throughId, total) = measurementMutex.withLock {
+            val record = repository.getSession(id) ?: error("记录不存在")
+            val throughId = repository.lastPointId(id) ?: 0L
+            Triple(record, throughId, if (throughId > 0) repository.countPointsThrough(id, throughId) else 0L)
+        }
+        require(throughId > 0 || record.actualTorqueNm != null) { "记录尚无测量数据" }
+        val summary = WorkbookSummary(
+            recordId = record.id, projectName = record.projectName, lineName = record.lineName, sectionName = record.sectionName,
+            slabNo = record.slabNo, pointNo = record.pointNo, operatorName = record.operatorName, deviceSn = record.deviceSn,
+            startTimeMillis = record.startTime, endTimeMillis = record.endTime, resultStatus = record.resultStatus,
+            targetTorqueNm = record.targetTorqueNm, actualTorqueNm = record.actualTorqueNm,
+            targetAngleDeg = record.targetAngleDeg, actualAngleDeg = record.actualAngleDeg,
+            torqueLowerNm = record.torqueLowerNm, torqueUpperNm = record.torqueUpperNm,
+            angleLowerDeg = record.angleLowerDeg, angleUpperDeg = record.angleUpperDeg,
+            appVersion = BuildConfig.VERSION_NAME,
+        )
+        val metadata = MeasurementState(session = MeasurementSession(slabNo = record.slabNo, pointNo = record.pointNo))
+        val fileName = "R${id}_" + MeasurementCsvExporter.buildFileName(metadata).removeSuffix(".csv") + ".xlsx"
+        val target = openExportTarget(fileName, ExportOutcome.XLSX_MIME)
+        try {
+            target.output.use { output ->
+                SessionWorkbookWriter.write(output, summary, total) { emit ->
+                    var cursor = 0L
+                    var index = 0L
+                    while (cursor < throughId) {
+                        val page = repository.pointsPage(id, cursor, throughId)
+                        if (page.isEmpty()) break
+                        for (point in page) {
+                            index += 1
+                            emit(
+                                ProcessRow(
+                                    index = index, receivedAtMillis = point.timestampMillis, boltNo = point.boltNo,
+                                    torqueNm = point.torqueNm, angleDeg = point.angleDeg, angleRaw = point.angleRaw,
+                                    frameLabel = MeasurementCsvExporter.frameLabelFromRawHex(point.rawHex), rawHex = point.rawHex,
+                                ),
+                            )
+                        }
+                        cursor = page.last().id
+                    }
+                }
+            }
+            target.commit()
+        } catch (error: Throwable) {
+            target.abort()
+            throw error
+        }
+        return ExportOutcome(
+            success = true,
+            message = "导出完成（含图表）",
+            displayPath = target.displayPath,
+            shareUri = target.shareUri?.toString(),
+        )
+    }
+
+    private class ExportTarget(
+        val output: OutputStream,
+        val displayPath: String,
+        val shareUri: Uri?,
+        val commit: () -> Unit,
+        val abort: () -> Unit,
+    )
+
+    /** Android 10+ 写系统下载目录；否则或失败时写 App 专属 Documents，并经 FileProvider 分享。 */
+    private fun openExportTarget(fileName: String, mime: String): ExportTarget {
+        val application = getApplication<Application>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = application.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$EXPORT_DIR")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = runCatching { resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) }.getOrNull()
+            val stream = uri?.let { runCatching { resolver.openOutputStream(it) }.getOrNull() }
+            if (uri != null && stream != null) {
+                return ExportTarget(
+                    output = stream,
+                    displayPath = "下载/$EXPORT_DIR/$fileName",
+                    shareUri = uri,
+                    commit = { resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) },
+                    abort = { runCatching { resolver.delete(uri, null, null) } },
+                )
+            }
+            uri?.let { runCatching { resolver.delete(it, null, null) } }
+        }
+        val documentRoot = application.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: File(application.filesDir, "Documents")
+        val exportDir = File(documentRoot, EXPORT_DIR)
+        check(exportDir.isDirectory || exportDir.mkdirs()) { "无法创建导出目录" }
+        val file = File(exportDir, fileName)
+        val shareUri = runCatching {
+            FileProvider.getUriForFile(application, "${application.packageName}.exports", file)
+        }.getOrNull()
+        return ExportTarget(
+            output = file.outputStream(),
+            displayPath = "App专属目录/$EXPORT_DIR/$fileName",
+            shareUri = shareUri,
+            commit = {},
+            abort = { file.delete() },
+        )
+    }
+
+    /** 设置里勾选「同时导出 CSV」时随 xlsx 一起导出；失败只记状态，不影响已完成的 xlsx。 */
+    private suspend fun exportSessionCsvBlocking(id: Long) {
+        val result = runCatching { withContext(Dispatchers.IO) { writeSessionCsv(id) } }
+        val text = result.getOrElse { "CSV 导出失败：${it.message}" }
+        _state.update {
+            it.copy(
+                saveStatus = text,
+                lastExport = it.lastExport?.let { outcome ->
+                    if (result.isSuccess) outcome.copy(message = outcome.message + "，CSV 也已导出") else outcome.copy(message = outcome.message + "；CSV 未导出")
+                },
+            )
+        }
+    }
+
     fun exportSessionCsv(id: Long) {
         viewModelScope.launch {
             if (_state.value.exportInProgress) return@launch
             _state.update { it.copy(exportInProgress = true) }
             try {
-                val result = withContext(Dispatchers.IO) {
+                val result = withContext(Dispatchers.IO) { writeSessionCsv(id) }
+                _state.update { it.copy(saveStatus = result) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _state.update { it.copy(saveStatus = "CSV 导出失败：${error.message}") }
+            } finally {
+                _state.update { it.copy(exportInProgress = false) }
+            }
+        }
+    }
+
+    private suspend fun writeSessionCsv(id: Long): String {
                     // 等当前帧完整入库后冻结上界；之后收到的点留待下一次导出。
                     val snapshot = measurementMutex.withLock {
                         val record = repository.getSession(id) ?: error("记录不存在")
@@ -368,17 +881,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                     val application = getApplication<Application>()
                     val path = exportCsvToDownloads(application, fileName, write)
                         ?: exportCsvToAppDocuments(application, fileName, write)
-                    "CSV 已导出：$path · $rowCount 个过程点"
-                }
-                _state.update { it.copy(saveStatus = result) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                _state.update { it.copy(saveStatus = "CSV 导出失败：${error.message}") }
-            } finally {
-                _state.update { it.copy(exportInProgress = false) }
-            }
-        }
+                    return "CSV 已导出：$path · $rowCount 个过程点"
     }
 
     private suspend fun exportCsvToDownloads(application: Application, fileName: String, write: suspend (Writer) -> Unit): String? {
@@ -424,7 +927,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
             val activeSessionId = sessionId ?: return@launch
             if (!_state.value.canConfirmEffectivePoint()) {
                 _state.update { it.copy(saveStatus = "没有可确认的采样点") }
-                appendLog("平衡点确认被跳过：还没有真实采样点")
+                appendLog("参考点标记被跳过：还没有真实采样点")
                 return@launch
             }
             repository.markLatestPointEffective(activeSessionId)
@@ -432,10 +935,10 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
             _state.update {
                 it.copy(
                     effectivePointCount = count,
-                    saveStatus = "已确认平衡点 $count",
+                    saveStatus = "已标记参考点 $count（未确认，待分析）",
                 )
             }
-            appendLog("最新采样点已标记为平衡点")
+            appendLog("最新采样点已标记为参考点（未确认）")
         }
     }
 
@@ -443,8 +946,8 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             val activeSessionId = sessionId ?: return@launch
             if (!_state.value.canRemoveEffectivePoint()) {
-                _state.update { it.copy(saveStatus = "当前没有可删除的平衡点") }
-                appendLog("平衡点删除被跳过：当前没有平衡点标记")
+                _state.update { it.copy(saveStatus = "当前没有可删除的参考点") }
+                appendLog("参考点删除被跳过：当前没有标记")
                 return@launch
             }
             repository.unmarkLatestEffectivePoint(activeSessionId)
@@ -453,13 +956,13 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                 it.copy(
                     effectivePointCount = count,
                     saveStatus = if (count > 0) {
-                        "已删除最近平衡点，剩余 $count"
+                        "已删除最近参考点，剩余 $count"
                     } else {
-                        "已删除平衡点标记，当前无平衡点"
+                        "已删除参考点标记，当前无标记"
                     },
                 )
             }
-            appendLog("已删除最近一个平衡点标记；原始采样点保留")
+            appendLog("已删除最近一个参考点标记；原始采样点保留")
         }
     }
 
@@ -469,6 +972,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         onSuccessState: ((MeasurementState) -> MeasurementState)? = null,
     ) {
         viewModelScope.launch {
+            lastControl = label
             runCatching {
                 connection.send(packet)
             }.onSuccess {
@@ -481,9 +985,10 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                 }
                 appendLog("$label 已发送：${packet.rawHex()}")
             }.onFailure { throwable ->
-                if (label == "写入扳手参数") {
+                if (label == LABEL_PARAMS) {
                     _state.update { it.copy(parameterStatus = "参数发送失败：${throwable.message ?: "未知错误"}") }
                 }
+                _state.update { it.copy(controlMessage = "$label 没发出去，请检查连接") }
                 appendLog("$label 发送失败：${throwable.message ?: "未知错误"}")
             }
         }
@@ -529,67 +1034,38 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         }.getOrNull()
     }
 
-    private suspend fun sendConnectionProbe() {
-        val heartbeat = WrenchPacketBuilder.heartbeat()
-        val querySn = WrenchPacketBuilder.querySn()
-        runCatching {
-            connection.send(heartbeat)
-            connection.send(querySn)
-        }.onSuccess {
-            _state.update {
-                it.copy(
-                    lastCommandLabel = "连接检查和设备编号查询",
-                    lastSentHex = querySn.rawHex(),
-                    lastProtocolSummary = "已查询设备编号",
-                )
-            }
-            appendLog("已发送连接检查和设备编号查询")
-        }.onFailure { throwable ->
-            appendLog("连接检查失败：${throwable.message ?: "未知错误"}")
-        }
-    }
-
     private suspend fun diagnoseNetwork(
         host: String,
         port: Int,
         checkPorts: Boolean,
     ): NetworkDiagnosticResult {
         val result = networkDiagnostics.diagnose(host, port, checkPorts)
+        applyNetworkInfo(result)
+        appendLog("网络诊断：${result.summary}")
+        return result
+    }
+
+    private fun applyNetworkInfo(result: NetworkDiagnosticResult) {
         _state.update {
             it.copy(
                 currentWifiName = result.wifiName,
                 localIp = result.localIp,
                 gatewayIp = result.gatewayIp,
                 inWrenchSubnet = result.inWrenchSubnet,
-                deviceIpReachable = result.deviceIpReachable,
-                devicePortReachable = result.devicePortReachable,
-                gatewayPortReachable = result.gatewayPortReachable,
-                discoveredEndpoint = result.discoveredEndpoint,
+                deviceIpReachable = result.deviceIpReachable ?: it.deviceIpReachable,
+                devicePortReachable = result.devicePortReachable ?: it.devicePortReachable,
+                gatewayPortReachable = result.gatewayPortReachable ?: it.gatewayPortReachable,
+                discoveredEndpoint = if (result.discoveredEndpoint != "--") result.discoveredEndpoint else it.discoveredEndpoint,
                 networkDiagnosticSummary = result.summary,
-                lastProtocolSummary = result.summary,
-                host = if (checkPorts && result.suggestedHost != host) result.suggestedHost else it.host,
-                port = if (checkPorts && result.suggestedPort != port) result.suggestedPort.toString() else it.port,
             )
         }
-        appendLog("网络诊断：${result.summary}")
-        return result
     }
 
-    private suspend fun switchConnection(newConnection: WrenchConnection) {
-        stateJob?.cancel()
+    /** 让 VM 处理该连接的所有入站帧（探测候选时也接，SN/电量等不丢）。先订阅，再建链。 */
+    private fun attachPackets(target: WrenchConnection) {
         packetJob?.cancel()
-        connection.disconnect()
-        connection = newConnection
-        bindConnection(newConnection)
-    }
-
-    private fun bindConnection(target: WrenchConnection) {
-        stateJob = viewModelScope.launch {
-            target.connectionState.collect { connectionState ->
-                _state.update { it.copy(connectionState = connectionState) }
-            }
-        }
-        packetJob = viewModelScope.launch {
+        connection = target
+        packetJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             target.incomingPackets.collect { packet ->
                 try {
                     measurementMutex.withLock { handlePacket(packet) }
@@ -607,6 +1083,20 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
 
     private suspend fun handlePacket(packet: WrenchPacket) {
         val now = System.currentTimeMillis()
+        val waiting = _state.value
+        if (waiting.linkPhase == LinkPhase.WAITING_REPLY && waiting.connectionState.isOnline) {
+            // 首个合法 C 协议帧到达：握手确认，记住端点。
+            waiting.activeEndpoint?.let { endpoint ->
+                rememberLastGood(endpoint)
+                _state.update {
+                    it.copy(
+                        linkPhase = LinkPhase.READY,
+                        probeReport = it.probeReport.copy(handshake = true, summary = "握手成功 $endpoint"),
+                    )
+                }
+                appendLog("扳手已回话，握手成功（$endpoint）")
+            }
+        }
         _state.update {
             it.copy(
                 receivedFrameCount = it.receivedFrameCount + 1,
@@ -619,7 +1109,15 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         when (packet.functionCode) {
             WrenchPacket.FUNC_ACK -> {
                 val ack = AckDecoder.decode(packet)
-                _state.update { it.copy(lastProtocolSummary = "设备应答 ${ack.label}") }
+                _state.update {
+                    val rejected = !ack.isAck
+                    it.copy(
+                        lastProtocolSummary = "设备应答 ${ack.label}",
+                        remoteEnabled = if (rejected && lastControl == LABEL_REMOTE_ON) false else it.remoteEnabled,
+                        motion = if (rejected && (lastControl == LABEL_FORWARD || lastControl == LABEL_REVERSE)) MotionCommand.NONE else it.motion,
+                        controlMessage = if (rejected && lastControl.isNotBlank()) "扳手没有接受：$lastControl" else it.controlMessage,
+                    )
+                }
                 appendLog("收到设备应答：${ack.label}")
             }
             WrenchPacket.FUNC_TORQUE_ANGLE -> handleTorqueAngle(packet, now)
@@ -722,7 +1220,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         val latest = newMeasuredPoints.lastOrNull() ?: return
         val latestResult = latestCalculation ?: return
         _state.update { old ->
-            val merged = (old.recentPoints + newMeasuredPoints).takeLast(50)
+            val merged = TorqueAngleWindow.append(old.recentPoints, newMeasuredPoints)
             old.copy(
                 currentBoltNo = decoded.boltNo,
                 employeeId = decoded.employeeId.ifBlank { "--" },
@@ -738,7 +1236,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                 lastCurvePointReceiveTime = now,
                 persistedPointCount = old.persistedPointCount + newMeasuredPoints.size,
                 recentPoints = merged,
-                saveStatus = "已保存 ${merged.size} 个显示点，原始帧已入库",
+                saveStatus = "已入库 ${old.persistedPointCount + newMeasuredPoints.size} 点",
             )
         }
     }
@@ -767,6 +1265,8 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                 currentAngleRaw = result.actualAngleDeg?.roundToInt() ?: it.currentAngleRaw,
                 lastFrameReceiveTime = now,
                 lastResult = result,
+                motion = if (it.motion == MotionCommand.FORWARD || it.motion == MotionCommand.REVERSE) MotionCommand.STOPPED else it.motion,
+                controlMessage = "本次运行结束：${result.status.label}",
                 lastProtocolSummary = "扳手设置已同步：目标扭矩 ${result.targetTorqueNm.formatLog()} Nm，实际扭矩 ${result.actualTorqueNm.formatLog()} Nm",
             ).withSyncedResultSettings(result)
         }
@@ -804,6 +1304,8 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
                 currentAngleRaw = result.actualAngleDeg?.roundToInt() ?: it.currentAngleRaw,
                 lastFrameReceiveTime = now,
                 lastPulseResult = result,
+                motion = if (it.motion == MotionCommand.FORWARD || it.motion == MotionCommand.REVERSE) MotionCommand.STOPPED else it.motion,
+                controlMessage = "本次运行结束：${result.status.label}",
                 lastProtocolSummary = "扳手脉冲结果已同步：目标扭矩 ${result.targetTorqueNm.formatLog()} Nm",
             )
         }
@@ -859,7 +1361,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
             ),
         )
         _state.update { old ->
-            val merged = (old.recentPoints + measuredPoint).takeLast(50)
+            val merged = TorqueAngleWindow.append(old.recentPoints, listOf(measuredPoint))
             old.copy(
                 currentBoltNo = boltNo,
                 currentTorqueNm = sourcePoint.torqueNm,
@@ -938,18 +1440,74 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    private fun MeasurementState.freshSessionState(): MeasurementState = MeasurementState(
+        targetWifiName = targetWifiName, host = host, port = port,
+        session = session.copy(deviceSn = "未知设备"), recentSessions = recentSessions,
+        connectionState = connectionState, linkPhase = linkPhase, wifiAvailable = wifiAvailable,
+        autoConnect = autoConnect, lastGoodEndpoint = lastGoodEndpoint, probeReport = probeReport,
+        currentWifiName = currentWifiName, localIp = localIp, gatewayIp = gatewayIp, inWrenchSubnet = inWrenchSubnet,
+        networkDiagnosticSummary = networkDiagnosticSummary,
+        exportCsvToo = exportCsvToo, darkTheme = darkTheme,
+    )
+
     override fun onCleared() {
+        retryJob?.cancel()
         connection.close()
+        wifiTracker.close()
         super.onCleared()
+    }
+
+    companion object {
+        const val PROBE_CONNECT_TIMEOUT_MILLIS = 2_000
+        const val CANDIDATE_CHECK_TIMEOUT_MILLIS = 700
+        const val RETRY_DELAY_MILLIS = 3_000L
+        const val WIFI_SETTLE_MILLIS = 600L
+        const val MAX_AUTO_RETRIES = 3
+        const val EXPORT_DIR = "WifiWrenchExports"
+
+        const val PREF_LAST_GOOD_HOST = "last_good_host"
+        const val PREF_LAST_GOOD_PORT = "last_good_port"
+        const val PREF_SLAB = "slab_no"
+        const val PREF_POINT = "point_no"
+        const val PREF_EXPORT_CSV = "export_csv_too"
+        const val PREF_DARK = "ui_dark"
+
+        const val LABEL_REMOTE_ON = "开启远程"
+        const val LABEL_REMOTE_OFF = "关闭远程"
+        const val LABEL_FORWARD = "正转"
+        const val LABEL_REVERSE = "反转"
+        const val LABEL_STOP = "停止扳手"
+        const val LABEL_PARAMS = "写入扳手参数"
     }
 }
 
+/** 参数侧滑里的草稿；取消不写入，保存经确认后才下发。 */
+data class ParameterDraft(
+    val mode: Int,
+    val targetTorque: String,
+    val torqueLower: String,
+    val torqueUpper: String,
+    val targetAngle: String,
+    val angleUpper: String,
+    val angleLower: String,
+)
+
+fun MeasurementState.parameterDraft(): ParameterDraft = ParameterDraft(
+    mode = parameterMode,
+    targetTorque = parameterTargetTorque,
+    torqueLower = parameterTorqueLower,
+    torqueUpper = parameterTorqueUpper,
+    targetAngle = parameterTargetAngle,
+    angleUpper = parameterAngleUpper,
+    angleLower = parameterAngleLower,
+)
+
 private fun Double?.formatLog(): String = this?.let { "%.1f".format(it) } ?: "--"
 
-private fun String.sanitizeUIntText(maxLength: Int = 5): String =
+internal fun String.sanitizeUIntText(maxLength: Int = 5): String =
     filter { it.isDigit() }.take(maxLength)
 
-private fun String.sanitizeDecimalText(maxLength: Int = 7): String {
+internal fun String.sanitizeDecimalText(maxLength: Int = 7): String {
     val builder = StringBuilder()
     var dotSeen = false
     for (char in this) {

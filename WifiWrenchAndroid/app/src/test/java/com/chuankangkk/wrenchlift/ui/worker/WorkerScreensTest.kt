@@ -1,0 +1,228 @@
+package com.chuankangkk.wrenchlift.ui.worker
+
+import android.graphics.Bitmap
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.isDialog
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import com.chuankangkk.wrenchlift.measurement.LinkPhase
+import com.chuankangkk.wrenchlift.measurement.MeasurementState
+import com.chuankangkk.wrenchlift.measurement.MotionCommand
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.File
+
+/**
+ * 正式工人页（设计规范 §10 验收清单的可自动化部分）：横屏 640×360dp 手机（CI 模拟器同尺寸）。
+ * 设置环境变量 WIFI_WRENCH_EVIDENCE_DIR 时额外输出截图，供人工视觉验收。
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [35], qualifiers = "w640dp-h360dp-land-xhdpi")
+class WorkerScreensTest {
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    private fun show(state: MeasurementState, actions: WorkerActions = WorkerActions(), screen: WorkerScreen = WorkerScreen.Workbench) {
+        compose.setContent {
+            WifiWrenchWorkerApp(state, actions, debugContent = null, startScreen = screen, immersive = false)
+        }
+        compose.waitForIdle()
+    }
+
+    @Test fun workbenchHasSixControlsAndNoPortOrIpOnMainScreen() {
+        show(WorkerSamples.live(remote = false))
+        listOf("back", "top_bar", "readouts", "torque_chart", "controls", "remote_toggle", "forward", "reverse", "stop", "params", "export", "bottom_strip")
+            .forEach { compose.onNodeWithTag(it, useUnmergedTree = true).assertExists() }
+        compose.onNodeWithText("板号 FZB-012 · 测点 P03").assertIsDisplayed()
+        compose.onNodeWithText("SN 2026110501").assertIsDisplayed()
+        compose.onNodeWithText("电量 82%").assertIsDisplayed()
+        compose.onNodeWithText("已连上扳手").assertIsDisplayed()
+        compose.onNodeWithText("远程未启用").assertIsDisplayed()
+        // NET-02：主流程不出现端口 / IP / 协议码。
+        listOf("7888", "192.168", "端口", "TCP", "0x").forEach { word ->
+            assertEquals("主屏不应出现 $word", 0, compose.onAllNodesWithText(word, substring = true).fetchSemanticsNodes().size)
+        }
+        listOf("已确认平衡", "模拟").forEach { word ->
+            assertEquals(0, compose.onAllNodesWithText(word, substring = true).fetchSemanticsNodes().size)
+        }
+        compose.onNodeWithText(com.chuankangkk.wrenchlift.measurement.WorkerText.WINDOW_NOTE, substring = true).assertExists()
+        capture("workbench-live-remote-off")
+    }
+
+    @Test fun motionDisabledUntilRemoteEnabledAndStopAlwaysAvailable() {
+        var remoteOn = 0
+        var stops = 0
+        show(WorkerSamples.live(remote = false), WorkerActions(enableRemote = { remoteOn++ }, stop = { stops++ }))
+        compose.onNodeWithTag("forward").assertIsNotEnabled()
+        compose.onNodeWithTag("reverse").assertIsNotEnabled()
+        compose.onNodeWithTag("stop").assertIsEnabled().performClick()
+        compose.onNodeWithText("先开远程，才能转动").assertExists()
+        compose.onNodeWithTag("remote_toggle").performClick()
+        compose.runOnIdle {
+            assertEquals(1, remoteOn)
+            assertEquals(1, stops)
+        }
+    }
+
+    @Test fun forwardAndReverseRequireSecondConfirmation() {
+        var forwards = 0
+        var reverses = 0
+        show(WorkerSamples.live(remote = true), WorkerActions(forward = { forwards++ }, reverse = { reverses++ }))
+        compose.onNodeWithTag("forward").assertIsEnabled().performClick()
+        compose.onNodeWithText("确认以正转方向驱动扳手？请确认现场安全。").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("确认前不得发送", 0, forwards) }
+        captureDialog("confirm-forward")
+        compose.onNodeWithText("取消").performClick()
+        compose.runOnIdle { assertEquals(0, forwards) }
+        compose.onNodeWithTag("forward").performClick()
+        compose.onAllNodesWithText("正转").fetchSemanticsNodes().also { assertTrue(it.size >= 2) }
+        compose.onNodeWithTag("confirm_motion").assertExists()
+        compose.onNode(isDialog()).assertExists()
+        compose.onAllNodesWithText("正转")[compose.onAllNodesWithText("正转").fetchSemanticsNodes().size - 1].performClick()
+        compose.runOnIdle { assertEquals(1, forwards) }
+        compose.onNodeWithTag("reverse").performClick()
+        compose.onNodeWithText("确认以反转方向驱动扳手？请确认现场安全。").assertIsDisplayed()
+        compose.onAllNodesWithText("反转")[compose.onAllNodesWithText("反转").fetchSemanticsNodes().size - 1].performClick()
+        compose.runOnIdle { assertEquals(1, reverses) }
+    }
+
+    @Test fun backWarnsThatEndingSessionDoesNotStopWrenchAndOffersOneKeyStop() {
+        var ended: Boolean? = null
+        show(WorkerSamples.live(remote = true, motion = MotionCommand.FORWARD), WorkerActions(endSession = { stopFirst -> ended = stopFirst }))
+        compose.onNodeWithTag("back").performClick()
+        compose.onNodeWithText("结束仅断开本机会话与采集，不会自动停止扳手。是否仍要结束？").assertIsDisplayed()
+        captureDialog("confirm-leave")
+        compose.onNodeWithText("先停止扳手再结束").performClick()
+        compose.runOnIdle { assertEquals(true, ended) }
+        compose.onNodeWithTag("records").assertExists()
+    }
+
+    @Test fun parametersOpenAsSideSheetAndWriteNeedsConfirmation() {
+        var written = 0
+        show(WorkerSamples.live(remote = true), WorkerActions(writeParameters = { written++ }))
+        compose.onNodeWithTag("params").performClick()
+        compose.onNodeWithTag("parameter_sheet").assertIsDisplayed()
+        compose.onNodeWithText("M1 定扭矩").assertExists()
+        capture("workbench-parameter-sheet")
+        compose.onNodeWithTag("param_save").performClick()
+        compose.onNodeWithText("确认将参数写入扳手？写入后影响后续动作。").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, written) }
+        compose.onNodeWithText("写入").performClick()
+        compose.runOnIdle { assertEquals(1, written) }
+    }
+
+    @Test fun compactLargeFontStillShowsAllControls() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        val state = WorkerSamples.live(remote = true, motion = MotionCommand.FORWARD).copy(lastResult = null)
+        show(state)
+        listOf("forward", "reverse", "stop", "params", "export", "readout_torque", "readout_angle").forEach {
+            compose.onNodeWithTag(it).assertIsDisplayed()
+        }
+        capture("workbench-live-remote-on-font1.3")
+        RuntimeEnvironment.setFontScale(1f)
+    }
+
+    @Test fun guideAndSplashHaveNoPortField() {
+        show(WorkerSamples.idle(LinkPhase.NO_WIFI), screen = WorkerScreen.Guide)
+        compose.onNodeWithText("去连接 Wi‑Fi").assertIsDisplayed()
+        assertEquals(0, compose.onAllNodesWithText("端口", substring = true).fetchSemanticsNodes().size)
+        assertEquals(0, compose.onAllNodesWithText("192.168", substring = true).fetchSemanticsNodes().size)
+        capture("guide-no-wifi")
+    }
+
+    @Test fun splashShowsExactlyTheThreeChineseLines() {
+        compose.setContent { WrenchWorkerTheme(dark = false) { SplashScreen(animate = false) } }
+        compose.onNodeWithText("WiFi 扳手").assertIsDisplayed()
+        compose.onNodeWithText("隔振器顶升调频采集").assertIsDisplayed()
+        compose.onNodeWithText("传康Kk · 免费供应").assertIsDisplayed()
+        capture("splash")
+    }
+
+    @Test fun recordsPageStartsMeasurementWithSlabAndPoint() {
+        var started: Pair<String, String>? = null
+        show(WorkerSamples.idle(LinkPhase.IDLE).copy(recentSessions = WorkerSamples.sessions()), WorkerActions(startMeasurement = { s, p -> started = s to p }), WorkerScreen.Records)
+        capture("records")
+        compose.onNodeWithTag("start_measurement").performClick()
+        compose.runOnIdle { assertEquals("FZB-012" to "P03", started) }
+        compose.onNodeWithTag("readouts").assertExists()
+    }
+
+    @Test fun portsOnlyAppearInAdvancedDiagnostics() {
+        show(WorkerSamples.live(remote = false), screen = WorkerScreen.Settings)
+        assertEquals(0, compose.onAllNodesWithText("端口", substring = true).fetchSemanticsNodes().size)
+        capture("settings")
+        compose.onNodeWithTag("open_diagnostics").performClick()
+        compose.onNodeWithText("192.168.4.1:7888（先试）").assertExists()
+        capture("diagnostics")
+    }
+
+    @Test fun darkThemeWorkbench() {
+        show(WorkerSamples.live(remote = true).copy(darkTheme = true))
+        capture("workbench-dark")
+    }
+
+    @Test
+    @Config(qualifiers = "w1280dp-h800dp-land-mdpi")
+    fun tabletWorkbenchScalesReadoutsAndKeepsZones() {
+        show(WorkerSamples.live(remote = true, motion = MotionCommand.FORWARD).copy(batteryPercent = 15))
+        compose.onNodeWithText("远程控制").assertExists()
+        compose.onNodeWithText("导出 Excel").assertExists()
+        capture("workbench-tablet")
+    }
+
+    @Test
+    @Config(qualifiers = "w853dp-h480dp-land-hdpi")
+    fun midPhoneWorkbench() {
+        show(WorkerSamples.live(remote = false))
+        capture("workbench-853x480")
+    }
+
+    @Test fun emptyWorkbenchWhileProbing() {
+        show(WorkerSamples.idle(LinkPhase.PROBING))
+        assertTrue(compose.onAllNodesWithText("正在连接扳手…").fetchSemanticsNodes().isNotEmpty())
+        compose.onNodeWithTag("export").assertIsNotEnabled()
+        capture("workbench-probing")
+    }
+
+    private fun capture(name: String) {
+        compose.waitForIdle()
+        save(name, compose.activity.window.decorView)
+    }
+
+    /** Compose 对话框是独立窗口：取最新的 Dialog 窗口画出来。 */
+    private fun captureDialog(name: String) {
+        compose.waitForIdle()
+        val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() ?: return
+        save(name, dialog.window!!.decorView, background = compose.activity.window.decorView)
+    }
+
+    private fun save(name: String, view: android.view.View, background: android.view.View? = null) {
+        val dir = System.getenv("WIFI_WRENCH_EVIDENCE_DIR") ?: return
+        val base = background ?: view
+        val bitmap = Bitmap.createBitmap(base.width.coerceAtLeast(1), base.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        base.draw(canvas)
+        if (background != null) {
+            canvas.drawColor(0x66000000)
+            val left = (background.width - view.width) / 2f
+            val top = (background.height - view.height) / 2f
+            canvas.translate(left, top)
+            view.draw(canvas)
+        }
+        File(dir).mkdirs()
+        File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+}

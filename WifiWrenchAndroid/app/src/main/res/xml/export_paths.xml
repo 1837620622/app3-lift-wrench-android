@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 仅分享 App 专属目录下的导出文件（Android 10 以下或下载目录不可写时的回退路径）。 -->
+<paths>
+    <external-files-path name="exports" path="Documents/WifiWrenchExports/" />
+    <files-path name="exports_internal" path="Documents/WifiWrenchExports/" />
+</paths>

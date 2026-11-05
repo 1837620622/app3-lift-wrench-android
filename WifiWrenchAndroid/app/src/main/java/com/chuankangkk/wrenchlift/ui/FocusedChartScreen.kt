@@ -525,8 +525,8 @@ private fun FocusActionBar(
                 )
                 ScrollActionRail(
                     buttons = listOf(
-                        RailButtonSpec("确认平衡点", onConfirmEffectivePoint, AppColors.running, state.canConfirmEffectivePoint()),
-                        RailButtonSpec("删除平衡点", onRemoveEffectivePoint, AppColors.danger, state.canRemoveEffectivePoint()),
+                        RailButtonSpec("标记参考点", onConfirmEffectivePoint, AppColors.running, state.canConfirmEffectivePoint()),
+                        RailButtonSpec("删除参考点", onRemoveEffectivePoint, AppColors.danger, state.canRemoveEffectivePoint()),
                     ),
                 )
             } else {
@@ -542,14 +542,14 @@ private fun FocusActionBar(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     ActionButton(
-                        "确认平衡点",
+                        "标记参考点",
                         onConfirmEffectivePoint,
                         Modifier.weight(1f),
                         AppColors.running,
                         enabled = state.canConfirmEffectivePoint(),
                     )
                     ActionButton(
-                        "删除平衡点",
+                        "删除参考点",
                         onRemoveEffectivePoint,
                         Modifier.weight(1f),
                         AppColors.danger,
@@ -595,14 +595,14 @@ private fun FocusActionBar(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             ActionButton(
-                "确认平衡点",
+                "标记参考点",
                 onConfirmEffectivePoint,
                 Modifier.weight(1f),
                 AppColors.running,
                 enabled = state.canConfirmEffectivePoint(),
             )
             ActionButton(
-                "删除平衡点",
+                "删除参考点",
                 onRemoveEffectivePoint,
                 Modifier.weight(1f),
                 AppColors.danger,

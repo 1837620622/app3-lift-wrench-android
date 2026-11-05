@@ -24,6 +24,7 @@ import java.net.Socket
 class TcpWrenchClient(
     private val connectTimeoutMillis: Int = 5000,
     private val heartbeatIntervalMillis: Long = 60_000L,
+    private val socketFactory: () -> Socket = { Socket() },
 ) : WrenchConnection {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val parser = WrenchPacketParser()
@@ -42,7 +43,7 @@ class TcpWrenchClient(
         disconnect()
         _connectionState.value = ConnectionState.Connecting
         withContext(Dispatchers.IO) {
-            val newSocket = Socket()
+            val newSocket = socketFactory()
             runCatching {
                 newSocket.also {
                     newSocket.tcpNoDelay = true

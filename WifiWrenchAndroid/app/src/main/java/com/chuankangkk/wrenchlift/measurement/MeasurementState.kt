@@ -1,6 +1,7 @@
 package com.chuankangkk.wrenchlift.measurement
 
 import com.chuankangkk.wrenchlift.connection.ConnectionState
+import com.chuankangkk.wrenchlift.connection.WrenchEndpoint
 import com.chuankangkk.wrenchlift.data.MeasurementEntity
 import com.chuankangkk.wrenchlift.protocol.WifiWrenchParameterSettings
 import com.chuankangkk.wrenchlift.protocol.PulseResultFrame
@@ -70,6 +71,20 @@ data class MeasurementState(
     val effectivePointCount: Int = 0,
     val lastRawHex: String = "",
     val logLines: List<String> = listOf("系统就绪，请先连接扳手 Wi-Fi，再检查连接。"),
+    // ---- 正式工人页：连接阶段、远程门闩、导出与偏好 ----
+    val linkPhase: LinkPhase = LinkPhase.IDLE,
+    val wifiAvailable: Boolean = false,
+    val autoConnect: Boolean = true,
+    val activeEndpoint: WrenchEndpoint? = null,
+    val lastGoodEndpoint: WrenchEndpoint? = null,
+    val probeReport: ProbeReport = ProbeReport(),
+    val remoteEnabled: Boolean = false,
+    val motion: MotionCommand = MotionCommand.NONE,
+    val controlMessage: String = "",
+    val currentSessionId: Long? = null,
+    val lastExport: ExportOutcome? = null,
+    val exportCsvToo: Boolean = false,
+    val darkTheme: Boolean = false,
 )
 
 fun MeasurementState.hasWrenchMeasurementData(): Boolean =

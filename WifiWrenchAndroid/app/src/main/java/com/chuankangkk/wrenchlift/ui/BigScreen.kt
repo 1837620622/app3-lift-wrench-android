@@ -56,7 +56,10 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.chuankangkk.wrenchlift.BuildConfig
 import com.chuankangkk.wrenchlift.R
+import com.chuankangkk.wrenchlift.ui.worker.WifiWrenchWorkerApp
+import com.chuankangkk.wrenchlift.ui.worker.WorkerActions
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
 import com.chuankangkk.wrenchlift.measurement.MeasurementViewModel
 import com.chuankangkk.wrenchlift.protocol.WrenchPacket
@@ -67,22 +70,21 @@ import java.util.Locale
 @Composable
 fun WrenchLiftApp(viewModel: MeasurementViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    WifiWrenchWorkerApp(
+        state = state,
+        actions = WorkerActions.from(viewModel),
+        // 调试控制台只在 DEBUG 构建出现，正式工人页不含原始帧/模拟入口。
+        debugContent = if (BuildConfig.DEBUG) {
+            { DebugConsole(state, viewModel) }
+        } else {
+            null
+        },
+    )
+}
+
+@Composable
+private fun DebugConsole(state: MeasurementState, viewModel: MeasurementViewModel) {
     WifiWrenchFieldTheme {
-        WorkerWorkbench(
-            state = state,
-            onConnect = viewModel::connectTcp,
-            onDisconnect = viewModel::disconnect,
-            onExport = viewModel::exportCurrentCsv,
-            onExportSession = viewModel::exportSessionCsv,
-            onLoadMoreHistory = viewModel::loadMoreHistory,
-            onNewRecord = viewModel::newRecord,
-            onHostChange = viewModel::updateHost,
-            onPortChange = viewModel::updatePort,
-            onSlabChange = viewModel::updateSlabNo,
-            onPointChange = viewModel::updatePointNo,
-            onWifiSettings = viewModel::openWifiSettings,
-            onWifiNameChange = viewModel::updateTargetWifiName,
-            debugContent = {
         BigScreen(
             state = state,
             onHostChange = viewModel::updateHost,
@@ -110,8 +112,6 @@ fun WrenchLiftApp(viewModel: MeasurementViewModel = viewModel()) {
             onExportCsv = viewModel::exportCurrentCsv,
             onConfirmEffectivePoint = viewModel::confirmEffectivePoint,
             onRemoveEffectivePoint = viewModel::removeLatestEffectivePoint,
-        )
-            },
         )
     }
 }
