@@ -15,6 +15,11 @@ class CalibrationForceCalculator(
             )
         }
         val sorted = torqueToForcePoints.sortedBy { it.first }
+        require(sorted.all { it.first.isFinite() && it.second.isFinite() } &&
+            sorted.zipWithNext().all { (a, b) -> b.first > a.first && b.second > a.second }) { "标定数据必须有限且严格单调" }
+        if (!point.torqueNm.isFinite() || point.torqueNm < sorted.first().first || point.torqueNm > sorted.last().first) {
+            return ForceCalculationResult(null, "超出标定范围", WarningLevel.WATCH, "当前扭矩不在标定范围内")
+        }
         val lower = sorted.lastOrNull { it.first <= point.torqueNm } ?: sorted.first()
         val upper = sorted.firstOrNull { it.first >= point.torqueNm } ?: sorted.last()
         val force = if (lower.first == upper.first) {

@@ -8,7 +8,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,11 +60,15 @@ class TcpWrenchClient(
     }
 
     override suspend fun disconnect() {
-        heartbeatJob?.cancelAndJoin()
+        val heartbeat = heartbeatJob
+        val reader = readJob
         heartbeatJob = null
-        readJob?.cancelAndJoin()
         readJob = null
+        heartbeat?.cancel()
+        reader?.cancel()
         closeSocketQuietly()
+        heartbeat?.join()
+        reader?.join()
         parser.reset()
         _connectionState.value = ConnectionState.Disconnected
     }

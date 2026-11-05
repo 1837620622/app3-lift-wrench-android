@@ -2,6 +2,7 @@ package com.chuankangkk.wrenchlift.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,7 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -52,6 +53,8 @@ fun EngineeringTrendChart(
     modifier: Modifier = Modifier,
     emphasized: Boolean = false,
     onClick: (() -> Unit)? = null,
+    emptyTitle: String? = null,
+    emptyDetail: String? = null,
 ) {
     val values = points.mapNotNull { point ->
         metric.valueOf(point)?.takeIf { it.isFinite() }?.let { value ->
@@ -67,7 +70,7 @@ fun EngineeringTrendChart(
     }
     val trend = analyzeTrend(values)
     val scale = values.chartScale()
-    val sampleText = "采样 ${values.size} 点"
+    val pointCountText = "采样 ${values.size} 点"
     val interactionModifier = if (onClick == null) {
         Modifier
     } else {
@@ -77,17 +80,18 @@ fun EngineeringTrendChart(
     BoxWithConstraints(
         modifier = modifier
             .then(interactionModifier)
-            .background(AppColors.panelInset, RoundedCornerShape(6.dp))
+            .background(AppColors.panelInset, MaterialTheme.shapes.large)
+            .border(1.dp, AppColors.panelLine.copy(alpha = 0.42f), MaterialTheme.shapes.large)
             .padding(horizontal = if (emphasized) 16.dp else 10.dp, vertical = if (emphasized) 12.dp else 8.dp),
     ) {
         val compactHeight = maxHeight < 170.dp
         val titleSize = when {
-            emphasized && maxWidth > 760.dp -> 23.sp
+            emphasized && maxWidth > AppBreakpoints.mediumWidth -> 23.sp
             emphasized -> 20.sp
             else -> 15.sp
         }
         val valueSize = when {
-            emphasized && maxWidth > 760.dp -> 34.sp
+            emphasized && maxWidth > AppBreakpoints.mediumWidth -> 34.sp
             emphasized -> 28.sp
             else -> 18.sp
         }
@@ -208,7 +212,7 @@ fun EngineeringTrendChart(
                 )
                 if (!compactHeight || emphasized) {
                     Text(
-                        text = "${trend.label} · ${trend.detail} · $sampleText",
+                        text = "${trend.label} · ${trend.detail} · $pointCountText",
                         color = if (trend.isStable) AppColors.running else AppColors.textSecondary,
                         fontSize = metaSize,
                         maxLines = 1,
@@ -258,7 +262,7 @@ fun EngineeringTrendChart(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    text = metric.emptyText(),
+                    text = emptyTitle ?: metric.emptyText(points, values.size),
                     color = AppColors.textPrimary,
                     fontSize = if (emphasized) 16.sp else 13.sp,
                     fontWeight = FontWeight.Bold,
@@ -267,7 +271,7 @@ fun EngineeringTrendChart(
                 )
                 if (emphasized) {
                     Text(
-                        text = "连接扳手并开始动作后自动绘制",
+                        text = emptyDetail ?: metric.emptyDetail(points, values.size),
                         color = AppColors.textSecondary,
                         fontSize = 13.sp,
                         maxLines = 1,
@@ -346,8 +350,8 @@ fun analyzeTrend(values: List<Pair<Double, Double>>): TrendSummary {
         recentRise <= max(abs(totalRise) * 0.16, 0.4)
 
     return when {
-        stable -> TrendSummary("平衡平台", "变化已趋稳，可等待现场确认", true)
-        slowing -> TrendSummary("接近平衡", "增速放缓，继续观察", false)
+        stable -> TrendSummary("变化趋缓", "趋势提示，不代表已识别分离点", true)
+        slowing -> TrendSummary("增速放缓", "继续采集，待完整数据分析", false)
         totalRise > 0.0 -> TrendSummary("持续上升", "载荷正在建立", false)
         else -> TrendSummary("趋势核查", "数据未形成稳定上升", false)
     }
@@ -359,10 +363,17 @@ private fun ChartMetric.valueOf(point: MeasuredPoint): Double? = when (this) {
     ChartMetric.PRESSURE -> point.pressureMpa
 }
 
-private fun ChartMetric.emptyText(): String = when (this) {
-    ChartMetric.TORQUE -> "等待扳手过程数据"
-    ChartMetric.FORCE -> "未标定：暂不输出正式顶升力"
-    ChartMetric.PRESSURE -> "未设置面积：暂不输出正式压力"
+private fun ChartMetric.emptyText(points: List<MeasuredPoint>, valueCount: Int): String = when {
+    valueCount == 1 -> "只有 1 个点，继续采集后成线"
+    points.isNotEmpty() && this == ChartMetric.FORCE -> "未标定：暂不输出正式顶升力"
+    points.isNotEmpty() && this == ChartMetric.PRESSURE -> "未设置面积：暂不输出正式压力"
+    else -> "等待真实扳手过程数据"
+}
+
+private fun ChartMetric.emptyDetail(points: List<MeasuredPoint>, valueCount: Int): String = when {
+    valueCount == 1 -> "已收到真实点，但连续曲线至少需要 2 个点"
+    points.isNotEmpty() -> "扭矩/转角已入库；力和压力需先完成现场标定"
+    else -> "连接扳手并开始动作后自动绘制"
 }
 
 private fun Double?.formatMetric(metric: ChartMetric): String {

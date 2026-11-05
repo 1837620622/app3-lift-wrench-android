@@ -6,10 +6,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -20,23 +21,30 @@ import androidx.compose.ui.unit.sp
 import com.chuankangkk.wrenchlift.data.MeasurementEntity
 import com.chuankangkk.wrenchlift.measurement.MeasuredPoint
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
+import com.chuankangkk.wrenchlift.measurement.angleReadoutText
+import com.chuankangkk.wrenchlift.measurement.torqueReadoutText
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 @Composable
 fun HistoryScreen(state: MeasurementState) {
+    val pageScroll = rememberScrollState()
+    val logScroll = rememberScrollState()
     Column(
-        modifier = Modifier.fillMaxSize().padding(14.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(pageScroll)
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         SectionTitle("通讯调试日志")
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
-                .background(AppColors.panelInset, RoundedCornerShape(8.dp))
-                .verticalScroll(rememberScrollState())
+                .heightIn(min = 150.dp, max = 260.dp)
+                .background(AppColors.panelInset, MaterialTheme.shapes.medium)
+                .verticalScroll(logScroll)
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -53,7 +61,7 @@ fun HistoryScreen(state: MeasurementState) {
         HistoryRecordBlock(state.recentSessions)
         RecentPointBlock(state.recentPoints)
         Text(
-            text = "最近点 ${state.recentPoints.size}/50 · 扭矩 ${"%.1f".format(state.currentTorqueNm)} Nm · 角度 ${"%.1f".format(state.currentAngleDeg)}° · 顶升力 ${state.currentForceKn?.let { "%.2f".format(it) } ?: "--"} kN · 压力 ${state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--"} MPa",
+            text = "最近点 ${state.recentPoints.size}/50 · 扭矩 ${state.torqueReadoutText()} Nm · 角度 ${state.angleReadoutText()}° · 顶升力 ${state.currentForceKn?.let { "%.2f".format(it) } ?: "--"} kN · 压力 ${state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--"} MPa",
             color = AppColors.textPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
@@ -68,7 +76,7 @@ private fun EvidenceBlock(state: MeasurementState) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(AppColors.panelInset, RoundedCornerShape(8.dp))
+            .background(AppColors.panelInset, MaterialTheme.shapes.medium)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
@@ -101,7 +109,7 @@ private fun HistoryRecordBlock(sessions: List<MeasurementEntity>) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(AppColors.panelInset, RoundedCornerShape(8.dp))
+            .background(AppColors.panelInset, MaterialTheme.shapes.medium)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
@@ -114,7 +122,7 @@ private fun HistoryRecordBlock(sessions: List<MeasurementEntity>) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(AppColors.panel, RoundedCornerShape(6.dp))
+                    .background(AppColors.panelRaised, MaterialTheme.shapes.small)
                     .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -142,7 +150,7 @@ private fun RecentPointBlock(points: List<MeasuredPoint>) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(AppColors.panelInset, RoundedCornerShape(8.dp))
+            .background(AppColors.panelInset, MaterialTheme.shapes.medium)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {

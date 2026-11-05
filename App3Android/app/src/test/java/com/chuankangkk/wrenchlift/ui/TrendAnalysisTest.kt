@@ -27,7 +27,7 @@ class TrendAnalysisTest {
 
         val result = analyzeTrend(values)
 
-        assertEquals("平衡平台", result.label)
+        assertEquals("变化趋缓", result.label)
         assertTrue(result.isStable)
     }
 }

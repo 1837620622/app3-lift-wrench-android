@@ -4,7 +4,10 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,7 +25,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -42,9 +44,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalView
@@ -53,13 +56,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.chuankangkk.wrenchlift.connection.ConnectionState
-import com.chuankangkk.wrenchlift.measurement.MeasuredPoint
-import com.chuankangkk.wrenchlift.measurement.MeasurementSession
+import com.chuankangkk.wrenchlift.R
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
 import com.chuankangkk.wrenchlift.measurement.MeasurementViewModel
-import com.chuankangkk.wrenchlift.measurement.WarningLevel
-import com.chuankangkk.wrenchlift.protocol.TorqueAnglePoint
 import com.chuankangkk.wrenchlift.protocol.WrenchPacket
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -68,15 +67,28 @@ import java.util.Locale
 @Composable
 fun WrenchLiftApp(viewModel: MeasurementViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    MaterialTheme(
-        colorScheme = darkColorScheme(),
-    ) {
+    App3FieldTheme {
+        WorkerWorkbench(
+            state = state,
+            onConnect = viewModel::connectTcp,
+            onDisconnect = viewModel::disconnect,
+            onExport = viewModel::exportCurrentCsv,
+            onExportSession = viewModel::exportSessionCsv,
+            onLoadMoreHistory = viewModel::loadMoreHistory,
+            onNewRecord = viewModel::newRecord,
+            onHostChange = viewModel::updateHost,
+            onPortChange = viewModel::updatePort,
+            onSlabChange = viewModel::updateSlabNo,
+            onPointChange = viewModel::updatePointNo,
+            onWifiSettings = viewModel::openWifiSettings,
+            debugContent = {
         BigScreen(
             state = state,
             onHostChange = viewModel::updateHost,
             onPortChange = viewModel::updatePort,
             onSlabNoChange = viewModel::updateSlabNo,
             onPointNoChange = viewModel::updatePointNo,
+            onOpenWifiSettings = viewModel::openWifiSettings,
             onConnect = viewModel::connectTcp,
             onDisconnect = viewModel::disconnect,
             onEnableRemote = viewModel::enableRemoteControl,
@@ -85,10 +97,20 @@ fun WrenchLiftApp(viewModel: MeasurementViewModel = viewModel()) {
             onStartReverse = viewModel::startReverse,
             onStop = viewModel::stopWrench,
             onHeartbeat = viewModel::sendHeartbeat,
-            onResultAck = viewModel::sendResultAck,
-            onTimeSync = viewModel::sendTimeSync,
+            onParameterModeChange = viewModel::updateParameterMode,
+            onParameterTargetTorqueChange = viewModel::updateParameterTargetTorque,
+            onParameterTorqueLowerChange = viewModel::updateParameterTorqueLower,
+            onParameterTorqueUpperChange = viewModel::updateParameterTorqueUpper,
+            onParameterTargetAngleChange = viewModel::updateParameterTargetAngle,
+            onParameterAngleUpperChange = viewModel::updateParameterAngleUpper,
+            onParameterAngleLowerChange = viewModel::updateParameterAngleLower,
+            onWriteParameterSettings = viewModel::writeParameterSettings,
             onSave = viewModel::saveCurrentRecord,
+            onExportCsv = viewModel::exportCurrentCsv,
             onConfirmEffectivePoint = viewModel::confirmEffectivePoint,
+            onRemoveEffectivePoint = viewModel::removeLatestEffectivePoint,
+        )
+            },
         )
     }
 }
@@ -100,6 +122,7 @@ fun BigScreen(
     onPortChange: (String) -> Unit,
     onSlabNoChange: (String) -> Unit,
     onPointNoChange: (String) -> Unit,
+    onOpenWifiSettings: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onEnableRemote: () -> Unit,
@@ -108,10 +131,18 @@ fun BigScreen(
     onStartReverse: () -> Unit,
     onStop: () -> Unit,
     onHeartbeat: () -> Unit,
-    onResultAck: () -> Unit,
-    onTimeSync: () -> Unit,
+    onParameterModeChange: (Int) -> Unit,
+    onParameterTargetTorqueChange: (String) -> Unit,
+    onParameterTorqueLowerChange: (String) -> Unit,
+    onParameterTorqueUpperChange: (String) -> Unit,
+    onParameterTargetAngleChange: (String) -> Unit,
+    onParameterAngleUpperChange: (String) -> Unit,
+    onParameterAngleLowerChange: (String) -> Unit,
+    onWriteParameterSettings: () -> Unit,
     onSave: () -> Unit,
+    onExportCsv: () -> Unit,
     onConfirmEffectivePoint: () -> Unit,
+    onRemoveEffectivePoint: () -> Unit,
 ) {
     var focusedChart by rememberSaveable { mutableStateOf(false) }
     var selectedMetricIndex by rememberSaveable { mutableIntStateOf(ChartMetric.FORCE.ordinal) }
@@ -132,7 +163,9 @@ fun BigScreen(
             onBack = { focusedChart = false },
             onStopWrench = onStop,
             onSave = onSave,
+            onExportCsv = onExportCsv,
             onConfirmEffectivePoint = onConfirmEffectivePoint,
+            onRemoveEffectivePoint = onRemoveEffectivePoint,
         )
         return
     }
@@ -144,8 +177,10 @@ fun BigScreen(
             .background(AppColors.background)
     ) {
         EngineeringBackground()
+        FieldBackdrop()
         val availableHeight = maxHeight
-        val compact = maxWidth < 1150.dp || maxHeight < 650.dp
+        val compact = maxWidth < AppBreakpoints.expandedWidth || maxHeight < AppBreakpoints.comfortableHeight
+        val stacked = maxWidth < AppBreakpoints.compactWidth
         val outerPadding = if (compact) 10.dp else 18.dp
         val gap = if (compact) 10.dp else 14.dp
         val leftWidth = if (compact) {
@@ -155,101 +190,187 @@ fun BigScreen(
         }
         val rightWidth = 340.dp
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(
-                    start = outerPadding,
-                    top = outerPadding,
-                    end = outerPadding,
-                    bottom = outerPadding + if (compact) 12.dp else 8.dp,
-                ),
-            verticalArrangement = Arrangement.spacedBy(gap),
-        ) {
-            HeaderBar(state, compact = compact)
-            if (!compact && availableHeight >= 760.dp) {
-                CriticalBanner(state)
-            }
-            Row(
+        if (stacked) {
+            val dashboardHeight = (maxHeight * 0.72f).coerceIn(520.dp, 720.dp)
+            Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(gap),
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(
+                        start = outerPadding,
+                        top = outerPadding,
+                        end = outerPadding,
+                        bottom = outerPadding + 18.dp,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(gap),
             ) {
-                SurfacePanel(modifier = Modifier.fillMaxHeight().width(leftWidth)) {
-                    if (compact) {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            SidePanelTabs(
-                                selected = selectedSidePanel,
-                                onSelected = { sidePanelIndex = it.ordinal },
-                                includeWork = true,
-                            )
-                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                SidePanelContent(
-                                    mode = selectedSidePanel,
-                                    state = state,
-                                    onHostChange = onHostChange,
-                                    onPortChange = onPortChange,
-                                    onSlabNoChange = onSlabNoChange,
-                                    onPointNoChange = onPointNoChange,
-                                    onConnect = onConnect,
-                                    onDisconnect = onDisconnect,
-                                    onEnableRemote = onEnableRemote,
-                                    onDisableRemote = onDisableRemote,
-                                    onStartForward = onStartForward,
-                                    onStartReverse = onStartReverse,
-                                    onStop = onStop,
-                                    onHeartbeat = onHeartbeat,
-                                    onResultAck = onResultAck,
-                                    onTimeSync = onTimeSync,
-                                    onSave = onSave,
-                                    onConfirmEffectivePoint = onConfirmEffectivePoint,
-                                )
-                            }
-                        }
-                    } else {
-                        ConnectionPanel(
-                            state = state,
-                            onHostChange = onHostChange,
-                            onPortChange = onPortChange,
-                            onSlabNoChange = onSlabNoChange,
-                            onPointNoChange = onPointNoChange,
-                            onConnect = onConnect,
-                            onDisconnect = onDisconnect,
-                            onEnableRemote = onEnableRemote,
-                            onDisableRemote = onDisableRemote,
-                            onStartForward = onStartForward,
-                            onStartReverse = onStartReverse,
-                            onStop = onStop,
-                            onHeartbeat = onHeartbeat,
-                            onResultAck = onResultAck,
-                            onTimeSync = onTimeSync,
-                            onSave = onSave,
-                            onConfirmEffectivePoint = onConfirmEffectivePoint,
-                        )
-                    }
-                }
+                HeaderBar(state, compact = true)
                 RealtimeDashboard(
                     state = state,
+                    onExportCsv = onExportCsv,
                     onOpenChart = { metric ->
                         selectedMetricIndex = metric.ordinal
                         focusedChart = true
                     },
-                    modifier = Modifier.weight(1f).fillMaxSize(),
+                    modifier = Modifier.fillMaxWidth().height(dashboardHeight),
                 )
-                if (!compact) {
-                    SurfacePanel(modifier = Modifier.fillMaxHeight().width(rightWidth)) {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            SidePanelTabs(
-                                selected = if (selectedSidePanel == SidePanelMode.WORK) SidePanelMode.PROTOCOL else selectedSidePanel,
-                                onSelected = { sidePanelIndex = it.ordinal },
-                                includeWork = false,
+                SurfacePanel(modifier = Modifier.fillMaxWidth().height(650.dp)) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        SidePanelTabs(
+                            selected = selectedSidePanel,
+                            onSelected = { sidePanelIndex = it.ordinal },
+                            includeWork = true,
+                        )
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            SidePanelContent(
+                                mode = selectedSidePanel,
+                                state = state,
+                                onHostChange = onHostChange,
+                                onPortChange = onPortChange,
+                                onSlabNoChange = onSlabNoChange,
+                                onPointNoChange = onPointNoChange,
+                                onOpenWifiSettings = onOpenWifiSettings,
+                                onConnect = onConnect,
+                                onDisconnect = onDisconnect,
+                                onEnableRemote = onEnableRemote,
+                                onDisableRemote = onDisableRemote,
+                                onStartForward = onStartForward,
+                                onStartReverse = onStartReverse,
+                                onStop = onStop,
+                                onHeartbeat = onHeartbeat,
+                                onParameterModeChange = onParameterModeChange,
+                                onParameterTargetTorqueChange = onParameterTargetTorqueChange,
+                                onParameterTorqueLowerChange = onParameterTorqueLowerChange,
+                                onParameterTorqueUpperChange = onParameterTorqueUpperChange,
+                                onParameterTargetAngleChange = onParameterTargetAngleChange,
+                                onParameterAngleUpperChange = onParameterAngleUpperChange,
+                                onParameterAngleLowerChange = onParameterAngleLowerChange,
+                                onWriteParameterSettings = onWriteParameterSettings,
+                                onSave = onSave,
+                                onExportCsv = onExportCsv,
+                                onConfirmEffectivePoint = onConfirmEffectivePoint,
+                                onRemoveEffectivePoint = onRemoveEffectivePoint,
                             )
-                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                when (selectedSidePanel) {
-                                    SidePanelMode.WORK, SidePanelMode.PROTOCOL -> ProtocolPanel(state)
-                                    SidePanelMode.POINTS -> PointMapScreen(state)
-                                    SidePanelMode.LOGS -> HistoryScreen(state)
+                        }
+                    }
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        start = outerPadding,
+                        top = outerPadding,
+                        end = outerPadding,
+                        bottom = outerPadding + if (compact) 12.dp else 8.dp,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(gap),
+            ) {
+                HeaderBar(state, compact = compact)
+                if (!compact && availableHeight >= AppBreakpoints.tallHeight) {
+                    CriticalBanner(state)
+                }
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    SurfacePanel(modifier = Modifier.fillMaxHeight().width(leftWidth)) {
+                        if (compact) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                SidePanelTabs(
+                                    selected = selectedSidePanel,
+                                    onSelected = { sidePanelIndex = it.ordinal },
+                                    includeWork = true,
+                                )
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    SidePanelContent(
+                                        mode = selectedSidePanel,
+                                        state = state,
+                                        onHostChange = onHostChange,
+                                        onPortChange = onPortChange,
+                                        onSlabNoChange = onSlabNoChange,
+                                        onPointNoChange = onPointNoChange,
+                                        onOpenWifiSettings = onOpenWifiSettings,
+                                        onConnect = onConnect,
+                                        onDisconnect = onDisconnect,
+                                        onEnableRemote = onEnableRemote,
+                                        onDisableRemote = onDisableRemote,
+                                        onStartForward = onStartForward,
+                                        onStartReverse = onStartReverse,
+                                        onStop = onStop,
+                                        onHeartbeat = onHeartbeat,
+                                        onParameterModeChange = onParameterModeChange,
+                                        onParameterTargetTorqueChange = onParameterTargetTorqueChange,
+                                        onParameterTorqueLowerChange = onParameterTorqueLowerChange,
+                                        onParameterTorqueUpperChange = onParameterTorqueUpperChange,
+                                        onParameterTargetAngleChange = onParameterTargetAngleChange,
+                                        onParameterAngleUpperChange = onParameterAngleUpperChange,
+                                        onParameterAngleLowerChange = onParameterAngleLowerChange,
+                                        onWriteParameterSettings = onWriteParameterSettings,
+                                        onSave = onSave,
+                                        onExportCsv = onExportCsv,
+                                        onConfirmEffectivePoint = onConfirmEffectivePoint,
+                                        onRemoveEffectivePoint = onRemoveEffectivePoint,
+                                    )
+                                }
+                            }
+                        } else {
+                            ConnectionPanel(
+                                state = state,
+                                onHostChange = onHostChange,
+                                onPortChange = onPortChange,
+                                onSlabNoChange = onSlabNoChange,
+                                onPointNoChange = onPointNoChange,
+                                onOpenWifiSettings = onOpenWifiSettings,
+                                onConnect = onConnect,
+                                onDisconnect = onDisconnect,
+                                onEnableRemote = onEnableRemote,
+                                onDisableRemote = onDisableRemote,
+                                onStartForward = onStartForward,
+                                onStartReverse = onStartReverse,
+                                onStop = onStop,
+                                onHeartbeat = onHeartbeat,
+                                onParameterModeChange = onParameterModeChange,
+                                onParameterTargetTorqueChange = onParameterTargetTorqueChange,
+                                onParameterTorqueLowerChange = onParameterTorqueLowerChange,
+                                onParameterTorqueUpperChange = onParameterTorqueUpperChange,
+                                onParameterTargetAngleChange = onParameterTargetAngleChange,
+                                onParameterAngleUpperChange = onParameterAngleUpperChange,
+                                onParameterAngleLowerChange = onParameterAngleLowerChange,
+                                onWriteParameterSettings = onWriteParameterSettings,
+                                onSave = onSave,
+                                onExportCsv = onExportCsv,
+                                onConfirmEffectivePoint = onConfirmEffectivePoint,
+                                onRemoveEffectivePoint = onRemoveEffectivePoint,
+                            )
+                        }
+                    }
+                    RealtimeDashboard(
+                        state = state,
+                        onExportCsv = onExportCsv,
+                        onOpenChart = { metric ->
+                            selectedMetricIndex = metric.ordinal
+                            focusedChart = true
+                        },
+                        modifier = Modifier.weight(1f).fillMaxSize(),
+                    )
+                    if (!compact) {
+                        SurfacePanel(modifier = Modifier.fillMaxHeight().width(rightWidth)) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                SidePanelTabs(
+                                    selected = if (selectedSidePanel == SidePanelMode.WORK) SidePanelMode.PROTOCOL else selectedSidePanel,
+                                    onSelected = { sidePanelIndex = it.ordinal },
+                                    includeWork = false,
+                                )
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    when (selectedSidePanel) {
+                                        SidePanelMode.WORK, SidePanelMode.PROTOCOL -> ProtocolPanel(state)
+                                        SidePanelMode.POINTS -> PointMapScreen(state)
+                                        SidePanelMode.LOGS -> HistoryScreen(state)
+                                    }
                                 }
                             }
                         }
@@ -274,22 +395,40 @@ private fun SidePanelTabs(
     includeWork: Boolean,
 ) {
     val modes = SidePanelMode.entries.filter { includeWork || it != SidePanelMode.WORK }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(AppDimens.space8),
+        color = AppColors.panelInset,
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, AppColors.panelLine.copy(alpha = 0.35f)),
     ) {
-        modes.forEach { mode ->
-            Button(
-                onClick = { onSelected(mode) },
-                modifier = Modifier.weight(1f).height(48.dp),
-                shape = RoundedCornerShape(6.dp),
-                contentPadding = PaddingValues(horizontal = 4.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (mode == selected) AppColors.info else AppColors.panelRaised,
-                    contentColor = AppColors.textPrimary,
-                ),
-            ) {
-                Text(mode.label, fontSize = 13.sp, fontWeight = if (mode == selected) FontWeight.Bold else FontWeight.Medium)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(AppDimens.space4),
+            horizontalArrangement = Arrangement.spacedBy(AppDimens.space4),
+        ) {
+            modes.forEach { mode ->
+                val checked = mode == selected
+                Button(
+                    onClick = { onSelected(mode) },
+                    modifier = Modifier.weight(1f).height(AppDimens.compactControlHeight),
+                    shape = MaterialTheme.shapes.small,
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (checked) AppColors.info else Color.Transparent,
+                        contentColor = if (checked) Color(0xFF071118) else AppColors.textSecondary,
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(
+                        defaultElevation = if (checked) 1.dp else 0.dp,
+                        pressedElevation = 0.dp,
+                    ),
+                ) {
+                    Text(
+                        mode.label,
+                        fontSize = 13.sp,
+                        fontWeight = if (checked) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
@@ -303,6 +442,7 @@ private fun SidePanelContent(
     onPortChange: (String) -> Unit,
     onSlabNoChange: (String) -> Unit,
     onPointNoChange: (String) -> Unit,
+    onOpenWifiSettings: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onEnableRemote: () -> Unit,
@@ -311,10 +451,18 @@ private fun SidePanelContent(
     onStartReverse: () -> Unit,
     onStop: () -> Unit,
     onHeartbeat: () -> Unit,
-    onResultAck: () -> Unit,
-    onTimeSync: () -> Unit,
+    onParameterModeChange: (Int) -> Unit,
+    onParameterTargetTorqueChange: (String) -> Unit,
+    onParameterTorqueLowerChange: (String) -> Unit,
+    onParameterTorqueUpperChange: (String) -> Unit,
+    onParameterTargetAngleChange: (String) -> Unit,
+    onParameterAngleUpperChange: (String) -> Unit,
+    onParameterAngleLowerChange: (String) -> Unit,
+    onWriteParameterSettings: () -> Unit,
     onSave: () -> Unit,
+    onExportCsv: () -> Unit,
     onConfirmEffectivePoint: () -> Unit,
+    onRemoveEffectivePoint: () -> Unit,
 ) {
     when (mode) {
         SidePanelMode.WORK -> ConnectionPanel(
@@ -323,6 +471,7 @@ private fun SidePanelContent(
             onPortChange = onPortChange,
             onSlabNoChange = onSlabNoChange,
             onPointNoChange = onPointNoChange,
+            onOpenWifiSettings = onOpenWifiSettings,
             onConnect = onConnect,
             onDisconnect = onDisconnect,
             onEnableRemote = onEnableRemote,
@@ -331,10 +480,18 @@ private fun SidePanelContent(
             onStartReverse = onStartReverse,
             onStop = onStop,
             onHeartbeat = onHeartbeat,
-            onResultAck = onResultAck,
-            onTimeSync = onTimeSync,
+            onParameterModeChange = onParameterModeChange,
+            onParameterTargetTorqueChange = onParameterTargetTorqueChange,
+            onParameterTorqueLowerChange = onParameterTorqueLowerChange,
+            onParameterTorqueUpperChange = onParameterTorqueUpperChange,
+            onParameterTargetAngleChange = onParameterTargetAngleChange,
+            onParameterAngleUpperChange = onParameterAngleUpperChange,
+            onParameterAngleLowerChange = onParameterAngleLowerChange,
+            onWriteParameterSettings = onWriteParameterSettings,
             onSave = onSave,
+            onExportCsv = onExportCsv,
             onConfirmEffectivePoint = onConfirmEffectivePoint,
+            onRemoveEffectivePoint = onRemoveEffectivePoint,
         )
         SidePanelMode.PROTOCOL -> ProtocolPanel(state)
         SidePanelMode.POINTS -> PointMapScreen(state)
@@ -422,48 +579,99 @@ private fun EngineeringBackground() {
 }
 
 @Composable
+private fun FieldBackdrop() {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        if (maxWidth < 900.dp || maxHeight < 620.dp) return@BoxWithConstraints
+        Image(
+            painter = painterResource(id = R.drawable.app3_field_backdrop),
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .alpha(0.10f),
+            contentScale = ContentScale.Crop,
+            alignment = Alignment.CenterStart,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            AppColors.background.copy(alpha = 0.34f),
+                            Color.Transparent,
+                            AppColors.background.copy(alpha = 0.76f),
+                        ),
+                    ),
+                ),
+        )
+    }
+}
+
+@Composable
 private fun HeaderBar(state: MeasurementState, compact: Boolean) {
     Surface(
         color = AppColors.panelStrong,
-        shape = RoundedCornerShape(8.dp),
-        tonalElevation = 0.dp,
+        shape = MaterialTheme.shapes.large,
+        tonalElevation = 3.dp,
+        border = BorderStroke(1.dp, AppColors.panelLine.copy(alpha = 0.42f)),
     ) {
-        Row(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
                     Brush.horizontalGradient(
-                        listOf(AppColors.panelStrong, Color(0xFF3C4244), AppColors.panelStrong),
+                        listOf(AppColors.panelStrong, Color(0xFF334044), AppColors.panelStrong),
                     ),
                 )
                 .padding(horizontal = if (compact) 12.dp else 18.dp, vertical = if (compact) 9.dp else 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "WiFi 扭矩扳手顶升现场工作台",
-                    color = AppColors.textPrimary,
-                    fontSize = if (compact) 21.sp else 27.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "板号 ${state.session.slabNo} · 点位 ${state.session.pointNo} · 螺栓 ${state.currentBoltNo} · 工号 ${state.employeeId}",
-                    color = AppColors.textSecondary,
-                    fontSize = if (compact) 12.sp else 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            StatusChip(label = state.connectionState.label, color = if (state.connectionState.isOnline) AppColors.teal else AppColors.blue)
-            StatusChip(label = "电池 ${state.batteryPercent?.let { "$it%" } ?: "--"}", color = AppColors.blue)
-            if (!compact) {
-                StatusChip(label = "帧数 ${state.receivedFrameCount}", color = AppColors.teal)
-                StatusChip(label = "最后帧 ${state.lastFrameReceiveTime.formatTimeOrDash()}", color = AppColors.amber)
+            val narrow = maxWidth < 640.dp
+            if (narrow) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HeaderTitleBlock(state = state, compact = true, modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        StatusChip(label = state.connectionState.label, color = if (state.connectionState.isOnline) AppColors.teal else AppColors.blue)
+                        StatusChip(label = "电池 ${state.batteryPercent?.let { "$it%" } ?: "--"}", color = AppColors.blue)
+                        StatusChip(label = "帧 ${state.receivedFrameCount}", color = AppColors.teal)
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    HeaderTitleBlock(state = state, compact = compact, modifier = Modifier.weight(1f))
+                    StatusChip(label = state.connectionState.label, color = if (state.connectionState.isOnline) AppColors.teal else AppColors.blue)
+                    StatusChip(label = "电池 ${state.batteryPercent?.let { "$it%" } ?: "--"}", color = AppColors.blue)
+                    if (!compact) {
+                        StatusChip(label = "帧数 ${state.receivedFrameCount}", color = AppColors.teal)
+                        StatusChip(label = "最后帧 ${state.lastFrameReceiveTime.formatTimeOrDash()}", color = AppColors.amber)
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun HeaderTitleBlock(state: MeasurementState, compact: Boolean, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(
+            "WiFi 扭矩扳手顶升现场工作台",
+            color = AppColors.textPrimary,
+            fontSize = if (compact) 21.sp else 27.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "板号 ${state.session.slabNo} · 点位 ${state.session.pointNo} · 螺栓 ${state.currentBoltNo} · 工号 ${state.employeeId}",
+            color = AppColors.textSecondary,
+            fontSize = if (compact) 12.sp else 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -472,8 +680,8 @@ private fun CriticalBanner(state: MeasurementState) {
     val color = state.warningLevel.color()
     Surface(
         color = color.copy(alpha = 0.14f),
-        shape = RoundedCornerShape(8.dp),
-        border = androidx.compose.foundation.BorderStroke(1.2.dp, color.copy(alpha = 0.58f)),
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(1.2.dp, color.copy(alpha = 0.58f)),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
@@ -561,7 +769,7 @@ private fun ProtocolStatusGrid(state: MeasurementState) {
 private fun MiniMetric(label: String, caption: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .background(AppColors.panelInset, RoundedCornerShape(6.dp))
+            .background(AppColors.panelInset, MaterialTheme.shapes.medium)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
@@ -574,7 +782,10 @@ private fun MiniMetric(label: String, caption: String, value: String, color: Col
 @Composable
 private fun ProtocolHexBlock(title: String, hex: String, color: Color) {
     Column(
-        modifier = Modifier.fillMaxWidth().background(AppColors.panelInset, RoundedCornerShape(8.dp)).padding(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(AppColors.panelInset, MaterialTheme.shapes.medium)
+            .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(title, color = color, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -607,9 +818,10 @@ fun SurfacePanel(modifier: Modifier = Modifier, content: @Composable () -> Unit)
     Surface(
         modifier = modifier,
         color = AppColors.panel,
-        shape = RoundedCornerShape(8.dp),
-        tonalElevation = 0.dp,
+        shape = MaterialTheme.shapes.large,
+        tonalElevation = 2.dp,
         shadowElevation = 0.dp,
+        border = BorderStroke(1.dp, AppColors.panelLine.copy(alpha = 0.44f)),
         content = content,
     )
 }
@@ -617,9 +829,9 @@ fun SurfacePanel(modifier: Modifier = Modifier, content: @Composable () -> Unit)
 @Composable
 fun StatusChip(label: String, color: Color) {
     Surface(
-        color = color.copy(alpha = 0.15f),
-        shape = RoundedCornerShape(6.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.45f)),
+        color = color.copy(alpha = 0.16f),
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(1.dp, color.copy(alpha = 0.42f)),
     ) {
         Text(
             text = label,
@@ -643,12 +855,12 @@ fun ActionButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(50.dp),
-        shape = RoundedCornerShape(7.dp),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+        modifier = modifier.height(AppDimens.controlHeight),
+        shape = MaterialTheme.shapes.small,
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = color,
-            contentColor = Color(0xFF071014),
+            contentColor = Color(0xFF07120F),
             disabledContainerColor = AppColors.panelRaised,
             disabledContentColor = AppColors.textSecondary,
         ),
@@ -667,10 +879,14 @@ fun SecondaryButton(
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(48.dp),
-        shape = RoundedCornerShape(7.dp),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = AppColors.textPrimary),
+        modifier = modifier.height(AppDimens.compactControlHeight),
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(1.dp, AppColors.panelLine.copy(alpha = if (enabled) 0.85f else 0.35f)),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = AppColors.textPrimary,
+            disabledContentColor = AppColors.textMuted,
+        ),
     ) {
         Text(label, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -682,47 +898,11 @@ fun ScrollColumn(content: @Composable () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(start = 14.dp, top = 14.dp, end = 14.dp, bottom = 30.dp),
+            .padding(start = AppDimens.space16, top = AppDimens.space16, end = AppDimens.space16, bottom = 30.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         content = { content() },
     )
 }
-
-object AppColors {
-    val background = Color(0xFF202425)
-    val panel = Color(0xFF2B3031)
-    val panelStrong = Color(0xFF363D3E)
-    val panelInset = Color(0xFF24292A)
-    val panelRaised = Color(0xFF333A3B)
-    val textPrimary = Color(0xFFF1F4F1)
-    val textSecondary = Color(0xFFB9C2BD)
-    val grid = Color(0xFF566061)
-    val axis = Color(0xFF9AA5A5)
-    val signal = Color(0xFFE4E8E3)
-    val running = Color(0xFF63B879)
-    val warning = Color(0xFFE3AD44)
-    val danger = Color(0xFFE06A6A)
-    val info = Color(0xFF6FA6C8)
-    val torqueCurve = Color(0xFF9BD4FF)
-    val forceCurve = warning
-    val pressureCurve = Color(0xFF74D7C8)
-    val teal = running
-    val blue = info
-    val amber = warning
-    val magenta = danger
-}
-
-private fun darkColorScheme() = androidx.compose.material3.darkColorScheme(
-    primary = AppColors.teal,
-    secondary = AppColors.blue,
-    tertiary = AppColors.amber,
-    background = AppColors.background,
-    surface = AppColors.panel,
-    onPrimary = Color(0xFF071014),
-    onSecondary = Color(0xFF071014),
-    onBackground = AppColors.textPrimary,
-    onSurface = AppColors.textPrimary,
-)
 
 private fun Long?.formatTimeOrDash(): String {
     if (this == null) return "--"
@@ -752,93 +932,4 @@ internal fun functionLabel(functionCode: Int): String = when (functionCode) {
     WrenchPacket.FUNC_PULSE_PARAM_SET_RCH -> "特殊模式参数"
     WrenchPacket.FUNC_PULSE_RESULT -> "特殊模式结果"
     else -> "未识别数据"
-}
-
-@Preview(
-    name = "App3 现场工作台",
-    widthDp = 1500,
-    heightDp = 900,
-    showBackground = true,
-    backgroundColor = 0xFF202224,
-)
-@Composable
-private fun BigScreenPreview() {
-    val now = System.currentTimeMillis()
-    val points = List(18) { index ->
-        val torque = 22.0 + index * 3.8
-        val angle = index * 12.0
-        MeasuredPoint(
-            sourcePoint = TorqueAnglePoint(
-                torqueNm = torque,
-                angleRaw = angle.toInt(),
-                angleDeg = angle,
-                timestampMillis = now + index * 120L,
-            ),
-            boltNo = 3,
-            forceKn = 18.0 + index * 1.65,
-            pressureMpa = (18.0 + index * 1.65) / 12.0,
-            displacementMm = angle / 360.0 * 5.0,
-            warningLevel = when {
-                index > 14 -> WarningLevel.WATCH
-                else -> WarningLevel.NORMAL
-            },
-            rawHex = "C5 C5 01 12 FF FF 20 00",
-        )
-    }
-    MaterialTheme(colorScheme = darkColorScheme()) {
-        BigScreen(
-            state = MeasurementState(
-                connectionState = ConnectionState.Connected("192.168.4.1", 7888),
-                host = "192.168.4.1",
-                port = "7888",
-                session = MeasurementSession(
-                    projectName = "地铁浮置板顶升",
-                    lineName = "示例线路",
-                    sectionName = "左线 K12+380",
-                    slabNo = "FZB-018",
-                    pointNo = "P03",
-                    operatorName = "现场班组",
-                    deviceSn = "APP3-PREVIEW",
-                ),
-                currentBoltNo = 3,
-                currentTorqueNm = points.last().sourcePoint.torqueNm,
-                currentAngleRaw = points.last().sourcePoint.angleRaw,
-                currentAngleDeg = points.last().sourcePoint.angleDeg,
-                currentForceKn = points.last().forceKn,
-                currentPressureMpa = points.last().pressureMpa,
-                currentDisplacementMm = points.last().displacementMm,
-                batteryPercent = 86,
-                lastFrameReceiveTime = now,
-                saveStatus = "预览数据未保存",
-                resultStatus = "等待真实结果",
-                warningLevel = WarningLevel.WATCH,
-                warningMessage = "接近预警阈值，继续观察顶升力变化",
-                recentPoints = points,
-                effectivePointCount = 2,
-                lastRawHex = "C5 C5 01 12 FF FF 20 00 00 42 00 D8",
-                logLines = listOf(
-                    "界面预览数据仅用于设计检查，正式 APK 只连接真实扳手。",
-                    "TCP 默认目标：192.168.4.1:7888。",
-                    "收到扭矩角度帧，正在刷新曲线。",
-                    "未接入实测标定前，力值仅用于联调显示。",
-                ),
-            ),
-            onHostChange = {},
-            onPortChange = {},
-            onSlabNoChange = {},
-            onPointNoChange = {},
-            onConnect = {},
-            onDisconnect = {},
-            onEnableRemote = {},
-            onDisableRemote = {},
-            onStartForward = {},
-            onStartReverse = {},
-            onStop = {},
-            onHeartbeat = {},
-            onResultAck = {},
-            onTimeSync = {},
-            onSave = {},
-            onConfirmEffectivePoint = {},
-        )
-    }
 }

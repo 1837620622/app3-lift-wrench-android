@@ -1,6 +1,7 @@
 package com.chuankangkk.wrenchlift.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -11,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,39 +25,80 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chuankangkk.wrenchlift.measurement.MeasurementDataOrigin
 import com.chuankangkk.wrenchlift.measurement.MeasurementState
 import com.chuankangkk.wrenchlift.measurement.WarningLevel
+import com.chuankangkk.wrenchlift.measurement.angleReadoutText
+import com.chuankangkk.wrenchlift.measurement.dataOrigin
+import com.chuankangkk.wrenchlift.measurement.exportDestinationText
+import com.chuankangkk.wrenchlift.measurement.exportReadinessText
+import com.chuankangkk.wrenchlift.measurement.hasWrenchMeasurementData
+import com.chuankangkk.wrenchlift.measurement.measurementGateStatus
+import com.chuankangkk.wrenchlift.measurement.saveExportEvidenceText
+import com.chuankangkk.wrenchlift.measurement.torqueReadoutText
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
 fun RealtimeDashboard(
     state: MeasurementState,
+    onExportCsv: () -> Unit,
     onOpenChart: (ChartMetric) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SurfacePanel(modifier = modifier) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val compact = maxHeight < 470.dp || maxWidth < 760.dp
+            val compact = maxHeight < AppBreakpoints.compactHeight || maxWidth < AppBreakpoints.mediumWidth
+            val scrollContent = compact
             val padding = if (compact) 10.dp else 16.dp
             val gap = if (compact) 8.dp else 12.dp
-            Column(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                verticalArrangement = Arrangement.spacedBy(gap),
-            ) {
-                WorkbenchHero(
-                    state = state,
-                    onOpenChart = onOpenChart,
-                    compact = compact,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                )
-                ReadoutBand(state = state, compact = compact)
-                if (!compact) {
+            val columnModifier = if (scrollContent) {
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+            } else {
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            }
+            if (scrollContent) {
+                val heroHeight = (maxHeight * 0.72f).coerceIn(430.dp, 560.dp)
+                Column(
+                    modifier = columnModifier,
+                    verticalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    WorkbenchHero(
+                        state = state,
+                        onExportCsv = onExportCsv,
+                        onOpenChart = onOpenChart,
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth().height(heroHeight),
+                    )
+                    ReadoutBand(state = state, compact = true)
+                    FieldEvidenceBand(state = state, compact = true)
+                    StatusLine(state = state, compact = true)
+                }
+            } else {
+                Column(
+                    modifier = columnModifier,
+                    verticalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    WorkbenchHero(
+                        state = state,
+                        onExportCsv = onExportCsv,
+                        onOpenChart = onOpenChart,
+                        compact = false,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                    ReadoutBand(state = state, compact = false)
+                    FieldEvidenceBand(state = state, compact = false)
                     WrenchSettingSyncBand(state)
-                }
-                if (!compact) {
                     DataStrip(state)
+                    StatusLine(state = state, compact = false)
                 }
-                StatusLine(state = state, compact = compact)
             }
         }
     }
@@ -63,6 +107,7 @@ fun RealtimeDashboard(
 @Composable
 private fun WorkbenchHero(
     state: MeasurementState,
+    onExportCsv: () -> Unit,
     onOpenChart: (ChartMetric) -> Unit,
     compact: Boolean,
     modifier: Modifier = Modifier,
@@ -70,15 +115,20 @@ private fun WorkbenchHero(
     Surface(
         modifier = modifier,
         color = AppColors.panelInset,
-        shape = RoundedCornerShape(8.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.grid.copy(alpha = 0.48f)),
+        shape = MaterialTheme.shapes.large,
+        tonalElevation = 1.dp,
+        border = BorderStroke(1.dp, AppColors.panelLine.copy(alpha = 0.55f)),
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(if (compact) 12.dp else 18.dp)) {
             val narrow = maxWidth < 620.dp
             val trend = state.fieldTrend()
             val forceText = state.currentForceKn?.let { "%.2f".format(it) } ?: "--"
             val forceCaption = if (state.currentForceKn == null) {
-                "未标定，不输出正式顶升力"
+                if (state.recentPoints.isEmpty()) {
+                    "等待扳手负载数据；未标定不显示正式力"
+                } else {
+                    "已有扭矩/转角；未标定不显示正式力"
+                }
             } else {
                 "${state.warningLevel.labelText()} · ${trend.label}"
             }
@@ -88,6 +138,7 @@ private fun WorkbenchHero(
                     verticalArrangement = Arrangement.SpaceBetween,
                 ) {
                     WorkbenchPrimaryReadout(
+                        state = state,
                         value = forceText,
                         caption = forceCaption,
                         compact = true,
@@ -95,6 +146,7 @@ private fun WorkbenchHero(
                     )
                     WorkbenchCurveActions(
                         state = state,
+                        onExportCsv = onExportCsv,
                         onOpenChart = onOpenChart,
                         compact = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -107,6 +159,7 @@ private fun WorkbenchHero(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     WorkbenchPrimaryReadout(
+                        state = state,
                         value = forceText,
                         caption = forceCaption,
                         compact = compact,
@@ -114,6 +167,7 @@ private fun WorkbenchHero(
                     )
                     WorkbenchCurveActions(
                         state = state,
+                        onExportCsv = onExportCsv,
                         onOpenChart = onOpenChart,
                         compact = compact,
                         modifier = Modifier.weight(0.85f).fillMaxWidth(),
@@ -126,91 +180,199 @@ private fun WorkbenchHero(
 
 @Composable
 private fun WorkbenchPrimaryReadout(
+    state: MeasurementState,
     value: String,
     caption: String,
     compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
-    ) {
-        Text(
-            "现场主读数",
-            color = AppColors.textSecondary,
-            fontSize = if (compact) 13.sp else 15.sp,
-            maxLines = 1,
-        )
-        Text(
-            "顶升力",
-            color = AppColors.textPrimary,
-            fontSize = if (compact) 24.sp else 34.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                value,
-                color = AppColors.warning,
-                fontSize = if (compact) 50.sp else 80.sp,
-                fontWeight = FontWeight.Black,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "kN",
-                color = AppColors.textSecondary,
-                fontSize = if (compact) 16.sp else 22.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 6.dp, bottom = if (compact) 10.dp else 16.dp),
-            )
+    BoxWithConstraints(modifier = modifier) {
+        val veryNarrow = maxWidth < 300.dp
+        val valueSize = when {
+            veryNarrow -> 40.sp
+            compact -> 50.sp
+            else -> 80.sp
         }
-        Text(
-            caption,
-            color = AppColors.textSecondary,
-            fontSize = if (compact) 13.sp else 16.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
+        val titleSize = when {
+            veryNarrow -> 20.sp
+            compact -> 24.sp
+            else -> 34.sp
+        }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
+        ) {
+            Text(
+                "现场主读数",
+                color = AppColors.textSecondary,
+                fontSize = if (compact) 13.sp else 15.sp,
+                maxLines = 1,
+            )
+            Text(
+                "顶升力",
+                color = AppColors.textPrimary,
+                fontSize = titleSize,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    value,
+                    color = AppColors.warning,
+                    fontSize = valueSize,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "kN",
+                    color = AppColors.textSecondary,
+                    fontSize = if (compact) 16.sp else 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 6.dp, bottom = if (compact) 10.dp else 16.dp),
+                )
+            }
+            Text(
+                caption,
+                color = AppColors.textSecondary,
+                fontSize = if (compact) 13.sp else 16.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!compact) {
+                FieldStepRail(state = state)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FieldStepRail(state: MeasurementState) {
+    val hasMeasurementData = state.hasWrenchMeasurementData()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        WorkStepChip(
+            label = "Wi-Fi",
+            value = when {
+                state.inWrenchSubnet -> "扳手网段"
+                state.currentWifiName != "--" -> "已连接"
+                else -> "未确认"
+            },
+            color = if (state.inWrenchSubnet) AppColors.running else AppColors.info,
+            modifier = Modifier.weight(1f),
         )
+        WorkStepChip(
+            label = "TCP",
+            value = if (state.connectionState.isOnline) "已连接" else state.connectionState.label,
+            color = if (state.connectionState.isOnline) AppColors.running else AppColors.warning,
+            modifier = Modifier.weight(1f),
+        )
+        WorkStepChip(
+            label = "曲线点",
+            value = when {
+                state.recentPoints.isNotEmpty() -> "${state.recentPoints.size} 点"
+                state.receivedFrameCount > 0 -> "等过程点"
+                else -> "无数据"
+            },
+            color = if (state.recentPoints.isNotEmpty()) AppColors.teal else AppColors.amber,
+            modifier = Modifier.weight(1f),
+        )
+        WorkStepChip(
+            label = "导出",
+            value = when {
+                !hasMeasurementData -> "等数据"
+                state.saveStatus.startsWith("CSV 已导出") -> "已完成"
+                state.saveStatus.contains("失败") -> "失败"
+                else -> "未导出"
+            },
+            color = when {
+                !hasMeasurementData -> AppColors.amber
+                state.saveStatus.startsWith("CSV 已导出") -> AppColors.running
+                state.saveStatus.contains("失败") -> AppColors.danger
+                else -> AppColors.info
+            },
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun WorkStepChip(
+    label: String,
+    value: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .background(color.copy(alpha = 0.10f), MaterialTheme.shapes.medium)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(label, color = AppColors.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, color = color, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun WorkbenchCurveActions(
     state: MeasurementState,
+    onExportCsv: () -> Unit,
     onOpenChart: (ChartMetric) -> Unit,
     compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val defaultMetric = if (state.currentForceKn == null) ChartMetric.TORQUE else ChartMetric.FORCE
+    val hasMeasurementData = state.hasWrenchMeasurementData()
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
     ) {
         ActionButton(
-            label = "进入曲线大屏",
-            onClick = { onOpenChart(ChartMetric.FORCE) },
+            label = "打开曲线大屏",
+            onClick = { onOpenChart(defaultMetric) },
             modifier = Modifier.fillMaxWidth(),
             color = AppColors.info,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             SecondaryButton(
-                label = "扭矩曲线",
+                label = "顶升力",
+                onClick = { onOpenChart(ChartMetric.FORCE) },
+                modifier = Modifier.weight(1f),
+            )
+            SecondaryButton(
+                label = "扭矩",
                 onClick = { onOpenChart(ChartMetric.TORQUE) },
                 modifier = Modifier.weight(1f),
             )
             SecondaryButton(
-                label = "压力曲线",
+                label = "压力",
                 onClick = { onOpenChart(ChartMetric.PRESSURE) },
                 modifier = Modifier.weight(1f),
             )
         }
+        SecondaryButton(
+            label = "导出 CSV",
+            onClick = onExportCsv,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = hasMeasurementData,
+        )
+        Text(
+            text = if (hasMeasurementData) state.exportReadinessText() else state.measurementGateStatus(),
+            color = if (hasMeasurementData) AppColors.running else AppColors.textSecondary,
+            fontSize = if (compact) 12.sp else 13.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
         if (!compact) {
             Text(
-                "主界面只做现场读数；全部曲线在独立页面查看。",
+                text = state.exportDestinationText(),
                 color = AppColors.textSecondary,
-                fontSize = 13.sp,
-                maxLines = 2,
+                fontSize = 12.sp,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -273,12 +435,91 @@ private fun WorkbenchHealthChip(
 ) {
     Column(
         modifier = modifier
-            .background(color.copy(alpha = 0.10f), RoundedCornerShape(7.dp))
+            .background(color.copy(alpha = 0.10f), MaterialTheme.shapes.medium)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(label, color = AppColors.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(value, color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun FieldEvidenceBand(state: MeasurementState, compact: Boolean) {
+    val origin = state.dataOrigin()
+    val sourceLabel = origin.dashboardLabel
+    val sourceColor = origin.color()
+    val saveStatus = state.saveExportEvidenceText()
+    Surface(
+        color = AppColors.panelInset,
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, AppColors.panelLine.copy(alpha = 0.42f)),
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 7.dp else 9.dp),
+        ) {
+            if (maxWidth < 560.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        EvidenceCell("来源", sourceLabel, sourceColor, Modifier.weight(1.1f), compact)
+                        EvidenceCell("帧数", "${state.receivedFrameCount}", AppColors.teal, Modifier.weight(0.8f), compact)
+                        EvidenceCell("点数", "${state.recentPoints.size}", AppColors.amber, Modifier.weight(0.8f), compact)
+                    }
+                    EvidenceCell("保存/导出", saveStatus, AppColors.info, Modifier.fillMaxWidth(), compact)
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    EvidenceCell("来源", sourceLabel, sourceColor, Modifier.weight(1f), compact)
+                    EvidenceCell("端点", "${state.host}:${state.port}", AppColors.signal, Modifier.weight(1f), compact)
+                    EvidenceCell("最近帧", state.lastPacketFunction?.let { functionLabel(it) } ?: "--", AppColors.amber, Modifier.weight(1f), compact)
+                    EvidenceCell("曲线时间", state.lastCurvePointReceiveTime.shortTime(), AppColors.teal, Modifier.weight(0.9f), compact)
+                    EvidenceCell("保存/导出", saveStatus, AppColors.info, Modifier.weight(1.5f), compact)
+                }
+            }
+        }
+    }
+}
+
+private fun MeasurementDataOrigin.color(): Color = when (this) {
+    MeasurementDataOrigin.LivePoints -> AppColors.running
+    MeasurementDataOrigin.RetainedRealPoints -> AppColors.warning
+    MeasurementDataOrigin.LoadedPoints -> AppColors.info
+    MeasurementDataOrigin.FramesOnly -> AppColors.warning
+    MeasurementDataOrigin.Waiting -> AppColors.info
+}
+
+private fun Long?.shortTime(): String =
+    this?.let { SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date(it)) } ?: "--"
+
+@Composable
+private fun EvidenceCell(
+    label: String,
+    value: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    compact: Boolean,
+) {
+    Column(
+        modifier = modifier
+            .background(color.copy(alpha = 0.08f), MaterialTheme.shapes.small)
+            .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 6.dp else 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(label, color = AppColors.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            value,
+            color = color,
+            fontSize = if (compact) 13.sp else 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -331,60 +572,107 @@ private fun WrenchSettingSyncBand(state: MeasurementState) {
 private fun ReadoutBand(state: MeasurementState, compact: Boolean) {
     Surface(
         color = AppColors.panelInset,
-        shape = RoundedCornerShape(6.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.grid.copy(alpha = 0.45f)),
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, AppColors.panelLine.copy(alpha = 0.42f)),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (compact) 5.dp else 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth().padding(
+                horizontal = if (compact) 4.dp else 8.dp,
+                vertical = if (compact) 5.dp else 8.dp,
+            ),
         ) {
-            MetricTile(
-                label = "扭矩",
-                value = "%.1f".format(state.currentTorqueNm),
-                unit = "Nm",
-                color = AppColors.signal,
-                compact = compact,
-                modifier = Modifier.weight(1f),
-            )
-            MetricSeparator(compact)
-            MetricTile(
-                label = "转角",
-                value = "%.1f".format(state.currentAngleDeg),
-                unit = "°",
-                color = AppColors.signal,
-                compact = compact,
-                modifier = Modifier.weight(1f),
-            )
-            MetricSeparator(compact)
-            MetricTile(
-                label = "顶升力",
-                value = state.currentForceKn?.let { "%.2f".format(it) } ?: "--",
-                unit = "kN",
-                color = if (state.warningLevel == WarningLevel.NORMAL) AppColors.warning else state.warningLevel.color(),
-                compact = compact,
-                featured = true,
-                modifier = Modifier.weight(if (compact) 1f else 1.35f),
-            )
-            MetricSeparator(compact)
-            MetricTile(
-                label = "压力",
-                value = state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--",
-                unit = "MPa",
-                color = AppColors.signal,
-                compact = compact,
-                modifier = Modifier.weight(1f),
-            )
-            MetricSeparator(compact)
-            MetricTile(
-                label = "位移",
-                value = state.currentDisplacementMm.takeIf { it > 0.0 }?.let { "%.2f".format(it) } ?: "--",
-                unit = "mm",
-                color = AppColors.signal,
-                compact = compact,
-                modifier = Modifier.weight(1f),
-            )
+            val narrow = maxWidth < 620.dp
+            if (narrow) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        TorqueMetricTile(state, compact = true, modifier = Modifier.weight(1f))
+                        AngleMetricTile(state, compact = true, modifier = Modifier.weight(1f))
+                        ForceMetricTile(state, compact = true, modifier = Modifier.weight(1.2f))
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        PressureMetricTile(state, compact = true, modifier = Modifier.weight(1f))
+                        DisplacementMetricTile(state, compact = true, modifier = Modifier.weight(1f))
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TorqueMetricTile(state, compact = compact, modifier = Modifier.weight(1f))
+                    MetricSeparator(compact)
+                    AngleMetricTile(state, compact = compact, modifier = Modifier.weight(1f))
+                    MetricSeparator(compact)
+                    ForceMetricTile(state, compact = compact, modifier = Modifier.weight(if (compact) 1f else 1.35f))
+                    MetricSeparator(compact)
+                    PressureMetricTile(state, compact = compact, modifier = Modifier.weight(1f))
+                    MetricSeparator(compact)
+                    DisplacementMetricTile(state, compact = compact, modifier = Modifier.weight(1f))
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun TorqueMetricTile(state: MeasurementState, compact: Boolean, modifier: Modifier = Modifier) {
+    MetricTile(
+        label = "扭矩",
+        value = state.torqueReadoutText(),
+        unit = "Nm",
+        color = AppColors.signal,
+        compact = compact,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun AngleMetricTile(state: MeasurementState, compact: Boolean, modifier: Modifier = Modifier) {
+    MetricTile(
+        label = "转角",
+        value = state.angleReadoutText(),
+        unit = "°",
+        color = AppColors.signal,
+        compact = compact,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ForceMetricTile(state: MeasurementState, compact: Boolean, modifier: Modifier = Modifier) {
+    MetricTile(
+        label = "顶升力",
+        value = state.currentForceKn?.let { "%.2f".format(it) } ?: "--",
+        unit = "kN",
+        color = if (state.warningLevel == WarningLevel.NORMAL) AppColors.warning else state.warningLevel.color(),
+        compact = compact,
+        featured = true,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun PressureMetricTile(state: MeasurementState, compact: Boolean, modifier: Modifier = Modifier) {
+    MetricTile(
+        label = "压力",
+        value = state.currentPressureMpa?.let { "%.3f".format(it) } ?: "--",
+        unit = "MPa",
+        color = AppColors.signal,
+        compact = compact,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun DisplacementMetricTile(state: MeasurementState, compact: Boolean, modifier: Modifier = Modifier) {
+    MetricTile(
+        label = "位移",
+        value = state.currentDisplacementMm.takeIf { it > 0.0 }?.let { "%.2f".format(it) } ?: "--",
+        unit = "mm",
+        color = AppColors.signal,
+        compact = compact,
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -402,35 +690,61 @@ private fun StatusLine(state: MeasurementState, compact: Boolean) {
     val trend = state.fieldTrend()
     Surface(
         color = state.warningLevel.color().copy(alpha = 0.12f),
-        shape = RoundedCornerShape(8.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, state.warningLevel.color().copy(alpha = 0.4f)),
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(1.dp, state.warningLevel.color().copy(alpha = 0.38f)),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = if (compact) 10.dp else 14.dp, vertical = if (compact) 7.dp else 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = if (compact) 7.dp else 10.dp),
         ) {
-            Text(
-                text = "${state.warningLevel.labelText()} · ${state.resultStatus} · ${trend.label}",
-                color = AppColors.textPrimary,
-                fontSize = if (compact) 16.sp else 21.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(0.34f),
-            )
-            Text(
-                text = if (compact) {
-                    "螺栓 ${state.currentBoltNo} · 帧 ${state.receivedFrameCount} · 平衡点 ${state.effectivePointCount} · ${state.warningMessage}"
-                } else {
-                    state.warningMessage
-                },
-                color = AppColors.textSecondary,
-                fontSize = if (compact) 12.sp else 15.sp,
-                maxLines = if (compact) 1 else 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(0.66f),
-            )
+            if (maxWidth < AppBreakpoints.compactWidth) {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = "${state.warningLevel.labelText()} · ${trend.label}",
+                        color = AppColors.textPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "螺栓 ${state.currentBoltNo} · 帧 ${state.receivedFrameCount} · ${state.warningMessage}",
+                        color = AppColors.textSecondary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${state.warningLevel.labelText()} · ${state.resultStatus} · ${trend.label}",
+                        color = AppColors.textPrimary,
+                        fontSize = if (compact) 16.sp else 21.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(0.34f),
+                    )
+                    Text(
+                        text = if (compact) {
+                            "螺栓 ${state.currentBoltNo} · 帧 ${state.receivedFrameCount} · 平衡点 ${state.effectivePointCount} · ${state.warningMessage}"
+                        } else {
+                            state.warningMessage
+                        },
+                        color = AppColors.textSecondary,
+                        fontSize = if (compact) 12.sp else 15.sp,
+                        maxLines = if (compact) 1 else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(0.66f),
+                    )
+                }
+            }
         }
     }
 }
@@ -501,7 +815,7 @@ private fun DataStrip(state: MeasurementState) {
 private fun SmallValue(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .background(AppColors.panelInset, RoundedCornerShape(8.dp))
+            .background(AppColors.panelInset, MaterialTheme.shapes.medium)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {

@@ -81,9 +81,34 @@ interface MeasurementDao {
     )
     suspend fun markLatestPointEffective(sessionId: Long)
 
+    @Query(
+        """
+        UPDATE torque_points
+        SET isEffectivePoint = 0
+        WHERE id = (
+            SELECT id FROM torque_points
+            WHERE sessionId = :sessionId AND isEffectivePoint = 1
+            ORDER BY timestampMillis DESC, id DESC
+            LIMIT 1
+        )
+        """,
+    )
+    suspend fun unmarkLatestEffectivePoint(sessionId: Long)
+
+    @Query("SELECT COUNT(*) FROM torque_points WHERE sessionId = :sessionId AND isEffectivePoint = 1")
+    suspend fun countEffectivePoints(sessionId: Long): Int
+
     @Query("SELECT * FROM measurement_sessions ORDER BY startTime DESC LIMIT :limit")
     fun observeRecentSessions(limit: Int = 20): Flow<List<MeasurementEntity>>
 
-    @Query("SELECT * FROM torque_points WHERE sessionId = :sessionId ORDER BY timestampMillis ASC")
+    @Query("SELECT * FROM torque_points WHERE sessionId = :sessionId ORDER BY id ASC")
     fun observePoints(sessionId: Long): Flow<List<TorquePointEntity>>
+    @Query("SELECT * FROM measurement_sessions WHERE id = :id")
+    suspend fun getSession(id: Long): MeasurementEntity?
+
+    @Query("SELECT MAX(id) FROM torque_points WHERE sessionId = :sessionId")
+    suspend fun lastPointId(sessionId: Long): Long?
+
+    @Query("SELECT * FROM torque_points WHERE sessionId = :sessionId AND id > :afterId AND id <= :throughId ORDER BY id LIMIT :limit")
+    suspend fun pointsPage(sessionId: Long, afterId: Long, throughId: Long, limit: Int = 1000): List<TorquePointEntity>
 }

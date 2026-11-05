@@ -1,6 +1,7 @@
 package com.chuankangkk.wrenchlift.ui
 
 import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -10,7 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -51,7 +52,7 @@ fun PointMapScreen(state: MeasurementState) {
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(AppColors.panelInset, RoundedCornerShape(8.dp))
+                .background(AppColors.panelInset, MaterialTheme.shapes.medium)
                 .padding(8.dp),
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -81,7 +82,7 @@ fun PointMapScreen(state: MeasurementState) {
                     color = AppColors.textPrimary.toArgb()
                     textSize = 13.dp.toPx()
                     textAlign = Paint.Align.CENTER
-                    isFakeBoldText = true
+                    typeface = Typeface.DEFAULT_BOLD
                 }
                 pointMapPositions.forEachIndexed { index, position ->
                     val pointLabel = "P%02d".format(index + 1)
@@ -112,6 +113,6 @@ fun PointMapScreen(state: MeasurementState) {
         }
         InfoLine("当前板号", state.session.slabNo)
         InfoLine("当前点位", state.session.pointNo)
-        InfoLine("提示", "确认平衡点会标记最近一条采样点，后续用于复算平衡状态。")
+        InfoLine("提示", "确认平衡点只标记最近采样点；删除平衡点只撤销标记，原始数据保留。")
     }
 }

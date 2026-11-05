@@ -27,7 +27,6 @@ abstract class WrenchDatabase : RoomDatabase() {
                     "wrench_lift.sqlite",
                 )
                     .addMigrations(MIGRATION_2_3)
-                    .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                     .also { instance = it }
             }

@@ -108,4 +108,14 @@ class MeasurementRepository(
     suspend fun markLatestPointEffective(sessionId: Long) {
         dao.markLatestPointEffective(sessionId)
     }
+
+    suspend fun unmarkLatestEffectivePoint(sessionId: Long) {
+        dao.unmarkLatestEffectivePoint(sessionId)
+    }
+
+    suspend fun countEffectivePoints(sessionId: Long): Int =
+        dao.countEffectivePoints(sessionId)
+    suspend fun getSession(id: Long) = dao.getSession(id)
+    suspend fun lastPointId(id: Long) = dao.lastPointId(id)
+    suspend fun pointsPage(id: Long, afterId: Long, throughId: Long) = dao.pointsPage(id, afterId, throughId)
 }

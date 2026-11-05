@@ -1,4 +1,13 @@
+* text=auto
+*.kt text eol=lf
+*.kts text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+gradlew text eol=lf
 *.jar binary
+*.png binary
 *.pdf binary
 *.docx binary
 *.dwg binary

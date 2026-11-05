@@ -1,28 +1,31 @@
-.DS_Store
-
-# Android / Gradle local state
+# Local tools, IDE state and caches
+.idea/
 .gradle/
-**/.gradle/
+.gradle-user-home/
+.build/
 **/build/
-**/local.properties
-**/*.apk
-**/*.aab
-**/*.iml
-
-# Android Studio local state
-App3Android/.idea/
-
-# Field captures and raw debug logs are kept local.
-调试报告/protocol_logs/
-调试报告/ui_screenshots/
-调试报告/android_logs/
-调试报告/android_screenshots/
-调试报告/apk/
-
-# Deprecated desktop project is not part of the Android mainline.
-顶升扳手采集软件（作废）/
-
-# Do not vendor SDKs or external caches.
+local.properties
+*.iml
+.DS_Store
+__pycache__/
+开发环境/
 android-sdk/
 AndroidDev/
 node_modules/
+# Signing, secrets, field data and binaries
+.env
+.env.*
+*.jks
+*.keystore
+*.pem
+*.key
+*.apk
+*.aab
+*.exe
+*.sqlite
+*.db
+*.pcap
+*.pcapng
+*.csv
+*.xlsx
+ui-evidence/

@@ -25,7 +25,6 @@ object TorqueAngleDecoder {
         val boltNo = readU16(payload, 10)
         val points = mutableListOf<TorqueAnglePoint>()
         var offset = 12
-        var index = 0
         while (offset + 3 < payload.size) {
             val torqueRaw = readU16(payload, offset)
             val angleRaw = readU16(payload, offset + 2)
@@ -34,10 +33,10 @@ object TorqueAngleDecoder {
                 angleRaw = angleRaw,
                 // 说明书和旧版实测均按整数角度解析。若厂家后续确认需除以 10，只需替换此处显示换算。
                 angleDeg = angleRaw.toDouble(),
-                timestampMillis = nowMillis + index,
+                // 0x12 没有设备逐点时间；同帧使用真实接收时间，顺序由入库 id 保留。
+                timestampMillis = nowMillis,
             )
             offset += 4
-            index += 1
         }
         return TorqueAngleFrame(employeeId, boltNo, points, packet.rawHex())
     }

@@ -1,56 +1,116 @@
 name: Android CI
-
+run-name: Android 0.2.0 build ${{ github.run_number }}
 on:
-  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  APP3_ANDROID_BUILD_ROOT: ${{ github.workspace }}/.build
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: App3Android
-
+    timeout-minutes: 35
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up JDK
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Unit tests
-        run: >
-          ./gradlew testDebugUnitTest --console=plain
-          --project-cache-dir "$RUNNER_TEMP/app3-android-build/project-cache"
-          -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
-          -Pkotlin.project.persistent.dir="$RUNNER_TEMP/app3-android-build/kotlin-project-data"
-
-      - name: Android lint
-        run: >
-          ./gradlew lintDebug --console=plain
-          --project-cache-dir "$RUNNER_TEMP/app3-android-build/project-cache"
-          -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
-          -Pkotlin.project.persistent.dir="$RUNNER_TEMP/app3-android-build/kotlin-project-data"
-
-      - name: Assemble debug APK
-        run: >
-          ./gradlew assembleDebug --console=plain
-          --project-cache-dir "$RUNNER_TEMP/app3-android-build/project-cache"
-          -Papp3.android.buildRoot="$RUNNER_TEMP/app3-android-build"
-          -Pkotlin.project.persistent.dir="$RUNNER_TEMP/app3-android-build/kotlin-project-data"
-
-      - name: Upload debug APK
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install compile SDK
+        run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Check source publication scope
+        run: python3 tools/source_guard.py
+      - name: Check shell scripts
+        run: shellcheck tools/emulator_test.sh
+      - name: Prepare stable debug signing
+        if: github.event_name != 'pull_request'
+        env:
+          APP3_DEBUG_KEYSTORE_BASE64: ${{ secrets.APP3_DEBUG_KEYSTORE_BASE64 }}
+          APP3_DEBUG_STORE_PASSWORD: ${{ secrets.APP3_DEBUG_STORE_PASSWORD }}
+        run: python3 tools/prepare_debug_signing.py
+      - name: Unit tests, lint and both build variants
+        working-directory: App3Android
+        env:
+          APP3_DEBUG_KEYSTORE: ${{ runner.temp }}/app3-debug.p12
+          APP3_DEBUG_STORE_PASSWORD: ${{ secrets.APP3_DEBUG_STORE_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease --stacktrace --console=plain -Papp3.versionCode=$((1000 + GITHUB_RUN_NUMBER))
+      - name: APK and emulator test APK
         uses: actions/upload-artifact@v4
         with:
-          name: app3-wrench-lift-debug-apk
-          path: ${{ runner.temp }}/app3-android-build/app/outputs/apk/debug/*.apk
+          name: app3-debug-${{ github.run_number }}
+          path: |
+            .build/app/outputs/apk/debug/*.apk
+            .build/app/outputs/apk/androidTest/debug/*.apk
           if-no-files-found: error
+          retention-days: 14
+      - name: Unit and lint evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-checks-${{ github.run_number }}
+          path: |
+            .build/app/reports/tests/
+            .build/app/test-results/
+            .build/app/reports/lint-results-debug.*
+          retention-days: 14
+  emulator:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 28
+            density: 240
+            font: '1.0'
+          - api: 35
+            density: 320
+            font: '1.3'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          name: app3-debug-${{ github.run_number }}
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash tools/emulator_test.sh '${{ matrix.density }}' '${{ matrix.font }}'
+      - name: Synthetic-data UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-api${{ matrix.api }}-${{ github.run_number }}
+          path: ui-evidence/
+          if-no-files-found: error
+          retention-days: 14
