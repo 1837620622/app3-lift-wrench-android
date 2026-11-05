@@ -8,6 +8,7 @@ import androidx.compose.ui.test.isDialog
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -149,9 +150,11 @@ class WorkerScreensTest {
 
     @Test fun splashShowsExactlyTheThreeChineseLines() {
         compose.setContent { WrenchWorkerTheme(dark = false) { SplashScreen(animate = false) } }
-        compose.onNodeWithText("WiFi 扳手").assertIsDisplayed()
-        compose.onNodeWithText("隔振器顶升调频采集").assertIsDisplayed()
-        compose.onNodeWithText("传康Kk · 免费供应").assertIsDisplayed()
+        // 定稿 06-splash 文案已烘焙在位图内；无叠字 Text，无障碍走 contentDescription。
+        compose.onNodeWithContentDescription("WiFi 扳手 · 隔振器顶升调频采集 · 传康Kk 免费供应").assertIsDisplayed()
+        compose.onNodeWithTag("splash").assertIsDisplayed()
+        assertEquals(0, compose.onAllNodesWithText("WiFi 扳手", substring = false).fetchSemanticsNodes().size)
+        assertEquals(0, compose.onAllNodesWithText("端口", substring = true).fetchSemanticsNodes().size)
         capture("splash")
     }
 

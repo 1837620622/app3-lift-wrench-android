@@ -42,7 +42,7 @@ import com.chuankangkk.wrenchlift.measurement.MeasurementState
 import com.chuankangkk.wrenchlift.measurement.WorkerText
 
 /**
- * 启动页（§5.5）：深炭底 + T 形手把 Wi‑Fi 扭矩扳手 + 三行中文。无端口、无按钮、无说明书式文案。
+ * 启动页（§5.5）：定稿 `06-splash.jpg` 全屏场景图（标题/署名已在图内）。无端口、无按钮、无叠字。
  */
 @Composable
 fun SplashScreen(modifier: Modifier = Modifier, animate: Boolean = true) {
