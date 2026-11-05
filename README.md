@@ -1,44 +1,59 @@
 # App3 隔振器顶升测力 Android
 
-使用扭矩扳手逐个检测浮置板钢弹簧隔振器，离线采集扭矩与转角，完整保存、可视化并导出数据，为后续力值标定与临界分离点分析积累试验依据。
+## 项目背景（先读这里）
 
-**完整项目背景、全部开发要求、当前状态和下一步任务都在[项目背景与开发要求](docs/项目背景与开发要求.md)。Claude 或其他 Agent 接手请先读这份文件。**
+**不是开发一把新扳手。** 现场用厂家定制的工业扭矩扳手（Wi‑Fi + TCP/C 协议），对浮置板下大量**钢弹簧隔振器**做顶升测力与**调频**。厂家扳手**给不出可靠「平衡点」**，协议也没有该字段——所以要先把**实时扭矩可视化、远程控制扳手、全量数据与带原生图表的 Excel 导出**做扎实，攒够几百～几千点后，**下一步再做平衡点算法并内嵌**。
 
-当前继续 Kotlin + Jetpack Compose，仅 Android。Windows 和更换语言留待后续。本机不安装开发环境，使用 GitHub Actions。
+更完整的项目背景：[docs/项目背景.md](docs/项目背景.md)  
+二次开发接手：[docs/开发接手说明.md](docs/开发接手说明.md)  
+UI / 控制 / Excel / 协议总表 / 阶段计划：[docs/界面与导出优化方向.md](docs/界面与导出优化方向.md)  
+完整工程约束：[docs/项目背景与开发要求.md](docs/项目背景与开发要求.md)
+
+当前继续 **Kotlin + Jetpack Compose**，仅 Android。本机可不装开发环境，使用 GitHub Actions。**产品大改代码仍冻结**，以文档交接为准；用户还将继续补充需求。
+
+**交付次序：** ① 先交付打磨完成的真实界面（APK）；② 再制作贴合实机 UI 的高端宣传静帧与动态（营销质感，非功能点流水账）。文档阶段不生成渲染/视频。
+
+
+## 权利与供应
+
+- **软件著作权**：本 App 及本仓库原创软件部分归 **传康Kk**（GitHub `1837620622`）所有。厂家扳手硬件与协议原文权利归设备厂家。
+- **供应方式**：当前为**免费供应**，不是付费商品或订阅服务；商务变更以著作权人书面说明为准。
+- 推送、公开发布或改名商用须经著作权人明确授权。
 
 ## 当前状态
 
-功能基线 `b30f0e2` 对应 [Actions build 16](https://github.com/1837620622/app3-lift-wrench-android/actions/runs/42013640926)：65 项单元测试、API 28/35 各 3 项仪器测试、Lint、Debug/Release 编译、APK 版本及签名检查通过。调试包版本是 `0.2.0-debug.1016`。
+功能基线 `b30f0e2` 对应 [Actions build 16](https://github.com/1837620622/app3-lift-wrench-android/actions/runs/42013640926)：65 项单元测试、API 28/35 仪器测试、Lint、Debug/Release 与签名检查通过。调试包曾用 `0.2.0-debug.1016`。
 
-**界面尚未通过用户验收。** 大字体横屏仍有数值裁切和绘图区过小的问题，接下来应按工业软件与 macOS/iOS 风格重新设计字体、布局和完整可视化。当前没有已验证的自动分离点算法，也未完成真实扳手现场验证。
+**界面尚未用户验收。** 已锁定方向：工业 + Mac/iOS 观感、横屏单屏无竖滚、Wi‑Fi 优先、**正式界面纳入远程控制**、实时扭矩–转角可读（按转角跨度自适应窗口）、**xlsx 为主且含原生 Excel 图**（设置可选 CSV）。算法为数据充足后的 **Phase N+1**。远程控制的组包已在 ViewModel，但正式工人页尚未提供安全控制面板（现主要在 DEBUG）。
 
 ## 使用与下载
 
-1. 到 Actions 对应 run 的 Artifacts 下载应用 APK，安装 `app-debug.apk`，不要安装 androidTest 测试 APK。
-2. 在设置中填写目标 Wi-Fi 名称、设备 IP/端口和板号/测点，先去系统连接设备 Wi-Fi。
-3. 连接后自动接收真实数据并入库。每次连接建立独立会话，工具 SN 来自真实回传。
-4. 结束采集后可导出当前或历史记录的完整 CSV。界面窗口不截断数据库和导出。
-5. 软件结束采集不等于机械停止。旧应用不要直接卸载，先保留/导出旧数据。
-
-Wi-Fi 名称可自定义并记住，不限制固定厂牌或 SSID。未标定或超标定范围不输出正式力值。当前优先 CSV，未实现原生 XLSX。
+1. 到 Actions 对应 run 的 Artifacts 下载 `app-debug.apk`（不要装 androidTest APK）。
+2. 设置里填目标 Wi‑Fi、设备 IP/端口、板号/测点；先到系统连接设备 Wi‑Fi。
+3. TCP 连接后收真实过程数据并入库。远程正反转等需按协议先启用远程控制（正式 UI 改造后会明示）。
+4. 导出规划升级为带图 Excel；现行为全量 CSV。界面窗口不截断数据库全量。
+5. **软件结束采集 ≠ 机械停止。** 旧应用勿直接卸载导致丢数据。
 
 ## 源码与协议
 
-- `App3Android/`：Android Studio 工程，入口为 MainActivity → WrenchLiftApp → WorkerWorkbench。
-- `最新协议.docx`：用户授权保留的厂家 C 协议原文。
-- `docs/项目背景与开发要求.md`：唯一完整需求与接手文档。
-- `AGENTS.md`：执行约束与提交规则。
-- `.github/workflows/android.yml`：云端构建及模拟器矩阵。
-- `tools/`：源码范围校验、云端签名准备与仪器测试脚本。
+- `App3Android/`：工程；入口 MainActivity → WrenchLiftApp → WorkerWorkbench（DEBUG 可进 BigScreen 控制台）。
+- `最新协议.docx`：厂家 C 协议原文。
+- `docs/项目背景.md`：**背景第一页（二次开发从这进）**。
+- `docs/开发接手说明.md`：模块、禁忌、无硬件测试。
+- `docs/界面与导出优化方向.md`：锁定决策 + 功能码表 + 阶段。
+- `docs/项目背景与开发要求.md`：长约束。
+- `AGENTS.md`：Agent 执行规则。
+- `.github/workflows/android.yml`、`tools/`：CI 与校验脚本。
 
-仓库只保留软件、授权协议和必要开发说明，不提交 CAD、真实数据、数据库、抓包、本机路径、密钥或环境缓存。当前版本的普通删除不清除历史提交。
+仓库只保留软件、授权协议与必要说明；禁止 CAD、真实库、密钥等入库。
 
 ## 构建规则
 
-使用 Java 21、工程内 Gradle wrapper 和 Android SDK；CI 安装依赖，本机无需安装。已有环境的贡献者可在 App3Android 执行：
+Java 21 + 工程内 Gradle wrapper + Android SDK（CI 安装）。可选本地：
 
 ```shell
+cd App3Android
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease
 ```
 
-版本基线 0.2.0，CI code=`1000+run_number`；调试 ID 带 `.debug`，主线调试签名由仓库 Secrets 提供，不能把调试签名当正式发行签名。APK 和测试证据放 Artifacts，不提交到源码。
+版本基线 0.2.0；CI `versionCode=1000+run_number`。调试签名由 Secrets 提供。推送/发布需用户明确授权。
