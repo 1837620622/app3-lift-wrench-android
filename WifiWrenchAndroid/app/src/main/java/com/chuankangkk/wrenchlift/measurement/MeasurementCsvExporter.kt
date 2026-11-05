@@ -45,6 +45,10 @@ object MeasurementCsvExporter {
 
     fun writeSummary(output: Appendable, state: MeasurementState) = appendRow(output, state.summaryRow())
 
+    /** 原始 HEX 第 4 字节为功能码；用于导出里的「帧类型」列。 */
+    fun frameLabelFromRawHex(rawHex: String): String =
+        rawHex.split(' ', limit = 5).getOrNull(3)?.toIntOrNull(16)?.exportFunctionLabel() ?: ""
+
     private fun appendRow(builder: Appendable, values: List<String>) {
         values.joinTo(builder, separator = ",") { it.csvCell() }
         builder.append('\n')

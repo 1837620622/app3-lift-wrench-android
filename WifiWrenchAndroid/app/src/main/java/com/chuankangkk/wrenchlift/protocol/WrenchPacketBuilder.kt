@@ -81,6 +81,60 @@ object WrenchPacketBuilder {
         return build(WrenchPacket.FUNC_PARAM_SET, payload, address)
     }
 
+    /** 0x50：RC283F 驱动脉冲/离合/冲击扳手参数（80 字节）。 */
+    fun pulseParameterSetRc283f(settings: Rc283fPulseSettings, address: Int = WrenchPacket.DEFAULT_ADDRESS): WrenchPacket {
+        val payload = pulseHeader(settings.productId, settings.stationName, settings.employeeId, settings.toolSerial, settings.boltModel, settings.dateTime, settings.mode)
+        writeU16(payload, 68, torqueToProtocol(settings.targetTorqueNm))
+        writeU16(payload, 70, settings.k1)
+        writeU16(payload, 72, settings.k2)
+        writeU16(payload, 74, settings.k3)
+        payload[76] = settings.boltStatusPercent.toUnsignedByte()
+        payload[77] = settings.errorPrecision.toUnsignedByte()
+        writeU16(payload, 78, settings.boltCount)
+        return build(WrenchPacket.FUNC_PULSE_PARAM_SET_RC283F, payload, address)
+    }
+
+    /** 0x51：RCH 驱动脉冲/离合/冲击扳手参数（80 字节）。 */
+    fun pulseParameterSetRch(settings: RchPulseSettings, address: Int = WrenchPacket.DEFAULT_ADDRESS): WrenchPacket {
+        val payload = pulseHeader(settings.productId, settings.stationName, settings.employeeId, settings.toolSerial, settings.boltModel, settings.dateTime, settings.mode)
+        writeU16(payload, 68, settings.presetIndex)
+        writeU16(payload, 70, settings.k1)
+        payload[72] = settings.k2.toUnsignedByte()
+        payload[73] = settings.k3.toUnsignedByte()
+        writeU16(payload, 74, settings.setTorqueRaw)
+        payload[76] = settings.boltStatusPercent.toUnsignedByte()
+        payload[77] = settings.errorPrecision.toUnsignedByte()
+        writeU16(payload, 78, settings.boltCount)
+        return build(WrenchPacket.FUNC_PULSE_PARAM_SET_RCH, payload, address)
+    }
+
+    private fun pulseHeader(
+        productId: String,
+        stationName: String,
+        employeeId: String,
+        toolSerial: String,
+        boltModel: String,
+        dateTime: LocalDateTime,
+        mode: Int,
+    ): ByteArray {
+        val payload = ByteArray(PULSE_PAYLOAD_SIZE)
+        writeAscii(payload, 0, 10, productId)
+        writeAscii(payload, 10, 20, stationName)
+        writeAscii(payload, 30, 10, employeeId)
+        writeAscii(payload, 40, 10, toolSerial)
+        writeAscii(payload, 50, 10, boltModel)
+        writeU16(payload, 60, dateTime.year)
+        payload[62] = dateTime.monthValue.toUnsignedByte()
+        payload[63] = dateTime.dayOfMonth.toUnsignedByte()
+        payload[64] = dateTime.hour.toUnsignedByte()
+        payload[65] = dateTime.minute.toUnsignedByte()
+        payload[66] = dateTime.second.toUnsignedByte()
+        payload[67] = mode.toUnsignedByte()
+        return payload
+    }
+
+    private const val PULSE_PAYLOAD_SIZE = 0x50
+
     fun heartbeat(address: Int = WrenchPacket.DEFAULT_ADDRESS): WrenchPacket =
         build(WrenchPacket.FUNC_HEARTBEAT, byteArrayOf(0x00), address)
 

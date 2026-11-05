@@ -7,7 +7,7 @@ adb shell settings put system font_scale "$2"
 adb install -r apk/debug/app-debug.apk
 adb install -r apk/androidTest/debug/app-debug-androidTest.apk
 adb shell am instrument -w com.chuankangkk.wrenchlift.debug.test/androidx.test.runner.AndroidJUnitRunner | tee ui-evidence/instrumentation.txt
-for preview in worker-empty worker-data; do
+for preview in worker-remote-off worker-remote-on worker-params worker-guide; do
   if ! adb exec-out run-as com.chuankangkk.wrenchlift.debug cat "files/$preview.png" > "ui-evidence/$preview.png"; then
     rm -f "ui-evidence/$preview.png"
   fi

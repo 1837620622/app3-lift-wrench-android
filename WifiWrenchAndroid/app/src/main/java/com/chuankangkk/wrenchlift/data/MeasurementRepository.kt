@@ -119,4 +119,5 @@ class MeasurementRepository(
     suspend fun updateDeviceSn(id: Long, sn: String) = dao.updateDeviceSn(id, sn)
     suspend fun lastPointId(id: Long) = dao.lastPointId(id)
     suspend fun pointsPage(id: Long, afterId: Long, throughId: Long) = dao.pointsPage(id, afterId, throughId)
+    suspend fun countPointsThrough(id: Long, throughId: Long) = dao.countPointsThrough(id, throughId)
 }

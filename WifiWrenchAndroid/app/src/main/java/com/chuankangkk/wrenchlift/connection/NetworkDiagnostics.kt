@@ -38,6 +38,7 @@ class NetworkDiagnostics(
     context: Context,
     private val timeoutMillis: Int = 900,
     private val subnetScanTimeoutMillis: Int = 260,
+    private val socketFactory: () -> Socket = { Socket() },
 ) {
     private val appContext = context.applicationContext
 
@@ -139,7 +140,7 @@ class NetworkDiagnostics(
     }.getOrDefault(false)
 
     private fun reachablePort(host: String, port: Int, timeout: Int = timeoutMillis): Boolean = runCatching {
-        Socket().use { socket ->
+        socketFactory().use { socket ->
             socket.tcpNoDelay = true
             socket.connect(InetSocketAddress(host, port), timeout)
         }
@@ -180,6 +181,52 @@ class NetworkDiagnostics(
                 .awaitAll()
                 .filterNotNull()
                 .minByOrNull { endpoint -> endpoint.first.substringAfterLast('.').toIntOrNull() ?: 255 }
+        }
+    }
+
+    /** 并行检查候选端点 TCP 可达性（短超时），保持输入顺序返回可连的端点。 */
+    suspend fun openEndpoints(
+        endpoints: List<WrenchEndpoint>,
+        timeout: Int = timeoutMillis,
+    ): List<WrenchEndpoint> = withContext(Dispatchers.IO) {
+        val semaphore = Semaphore(8)
+        coroutineScope {
+            endpoints.map { endpoint ->
+                async {
+                    semaphore.withPermit {
+                        endpoint.takeIf { reachablePort(it.host, it.port, timeout) }
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
+
+    /** 扳手子网短扫：返回所有 TCP 可达的候选端口端点（按主机号升序），供逐个做 C 协议握手。 */
+    suspend fun scanSubnet(
+        localIp: String,
+        ports: List<Int>,
+        exclude: Set<WrenchEndpoint>,
+        limit: Int = 6,
+    ): List<WrenchEndpoint> = withContext(Dispatchers.IO) {
+        val prefix = subnetPrefix(localIp) ?: return@withContext emptyList()
+        val semaphore = Semaphore(24)
+        coroutineScope {
+            (1..254)
+                .map { "$prefix.$it" }
+                .filter { it != localIp }
+                .map { host ->
+                    async {
+                        semaphore.withPermit {
+                            ports.map { WrenchEndpoint(host, it) }
+                                .filter { it !in exclude }
+                                .filter { reachablePort(it.host, it.port, subnetScanTimeoutMillis) }
+                        }
+                    }
+                }
+                .awaitAll()
+                .flatten()
+                .sortedBy { it.host.substringAfterLast('.').toIntOrNull() ?: 255 }
+                .take(limit)
         }
     }
 

@@ -733,7 +733,7 @@ private fun StatusLine(state: MeasurementState, compact: Boolean) {
                     )
                     Text(
                         text = if (compact) {
-                            "螺栓 ${state.currentBoltNo} · 帧 ${state.receivedFrameCount} · 平衡点 ${state.effectivePointCount} · ${state.warningMessage}"
+                            "螺栓 ${state.currentBoltNo} · 帧 ${state.receivedFrameCount} · 参考点 ${state.effectivePointCount} · ${state.warningMessage}"
                         } else {
                             state.warningMessage
                         },

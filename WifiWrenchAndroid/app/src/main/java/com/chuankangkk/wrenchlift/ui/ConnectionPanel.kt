@@ -218,7 +218,7 @@ fun ConnectionPanel(
             }
         }
 
-        SidebarGroup("四 记录与平衡点") {
+        SidebarGroup("四 记录与参考点") {
             val hasMeasurementData = state.hasWrenchMeasurementData()
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -236,14 +236,14 @@ fun ConnectionPanel(
                     .horizontalScroll(rememberScrollState()),
             ) {
                 ActionButton(
-                    "确认平衡点",
+                    "标记参考点",
                     onConfirmEffectivePoint,
                     Modifier.widthIn(min = 130.dp),
                     AppColors.running,
                     enabled = state.canConfirmEffectivePoint(),
                 )
                 ActionButton(
-                    "删除平衡点",
+                    "删除参考点",
                     onRemoveEffectivePoint,
                     Modifier.widthIn(min = 130.dp),
                     AppColors.danger,
@@ -315,7 +315,7 @@ fun ConnectionPanel(
             InfoLine("设备 SN", state.deviceSn.ifBlank { state.session.deviceSn })
             InfoLine("最近消息", state.lastProtocolSummary)
             InfoLine("结果状态", state.resultStatus)
-            InfoLine("平衡点数", "${state.effectivePointCount}")
+            InfoLine("参考点标记", "${state.effectivePointCount}")
             Text(
                 text = state.lastRawHex.ifBlank { "尚未接收原始帧" },
                 color = AppColors.running,

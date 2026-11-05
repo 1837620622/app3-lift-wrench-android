@@ -9,3 +9,4 @@ captures/
 *.aab
 *.iml
 .DS_Store
+build-evidence/

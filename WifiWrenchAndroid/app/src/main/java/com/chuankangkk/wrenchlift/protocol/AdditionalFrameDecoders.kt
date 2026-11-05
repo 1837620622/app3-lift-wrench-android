@@ -41,6 +41,15 @@ data class DeviceStatusFrame(
     val bytes: List<Int>,
     val rawHex: String,
 ) {
+    /** 协议 0x05 字节 8-9：错误码，0 表示无错误。 */
+    val errorCode: Int? = if (bytes.size >= 2) (bytes[0] shl 8) or bytes[1] else null
+
+    /** 协议 0x05 字节 10-11：控制位。 */
+    val controlBits: Int? = if (bytes.size >= 4) (bytes[2] shl 8) or bytes[3] else null
+
+    /** 协议「Bit1：正向 0 / 反向 1」，按 Bit1 = 最低位理解；位序待真机确认，只用于诊断显示。 */
+    val reverseDirection: Boolean? = controlBits?.let { (it and 0x0001) != 0 }
+
     val summary: String = if (bytes.isEmpty()) {
         "状态数据为空"
     } else {
