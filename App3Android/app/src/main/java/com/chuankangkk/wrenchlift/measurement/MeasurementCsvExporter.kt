@@ -41,7 +41,7 @@ object MeasurementCsvExporter {
     }
 
     fun writePoint(output: Appendable, state: MeasurementState, index: Int, point: MeasuredPoint) =
-        appendRow(output, state.pointRow(index, point))
+        appendRow(output, state.pointRow(index, point, includeTransientStatus = false))
 
     fun writeSummary(output: Appendable, state: MeasurementState) = appendRow(output, state.summaryRow())
 
@@ -80,7 +80,7 @@ object MeasurementCsvExporter {
         lastRawHex,
     )
 
-    private fun MeasurementState.pointRow(index: Int, point: MeasuredPoint): List<String> = listOf(
+    private fun MeasurementState.pointRow(index: Int, point: MeasuredPoint, includeTransientStatus: Boolean = true): List<String> = listOf(
         session.projectName,
         session.lineName,
         session.sectionName,
@@ -103,9 +103,9 @@ object MeasurementCsvExporter {
         point.sourcePoint.angleDeg.formatNumber(),
         point.forceKn.formatNullable(),
         point.pressureMpa.formatNullable(),
-        point.displacementMm.formatNumber(),
-        point.warningLevel.exportLabel(),
-        warningMessage,
+        if (includeTransientStatus) point.displacementMm.formatNumber() else "",
+        if (includeTransientStatus) point.warningLevel.exportLabel() else "",
+        if (includeTransientStatus) warningMessage else "",
         lastPacketFunction?.exportFunctionLabel() ?: "",
         point.rawHex,
     )
