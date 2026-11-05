@@ -58,7 +58,12 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
     private val uncalibratedCalculator: ForceCalculator = CalibrationForceCalculator(emptyList())
     private val networkDiagnostics = NetworkDiagnostics(application)
 
-    private val _state = MutableStateFlow(MeasurementState())
+    private val connectionPreferences = application.getSharedPreferences("connection_preferences", android.content.Context.MODE_PRIVATE)
+    private val _state = MutableStateFlow(MeasurementState(
+        targetWifiName = connectionPreferences.getString("target_wifi_name", "").orEmpty(),
+        host = connectionPreferences.getString("host", "192.168.4.1").orEmpty(),
+        port = connectionPreferences.getString("port", "7888").orEmpty(),
+    ))
     val state: StateFlow<MeasurementState> = _state.asStateFlow()
 
     private var connection: WrenchConnection = TcpWrenchClient()
@@ -83,10 +88,19 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
 
     fun updateHost(value: String) {
         _state.update { it.copy(host = value) }
+        connectionPreferences.edit().putString("host", value).apply()
     }
 
     fun updatePort(value: String) {
-        _state.update { it.copy(port = value.filter { char -> char.isDigit() }.take(5)) }
+        val port = value.filter { char -> char.isDigit() }.take(5)
+        _state.update { it.copy(port = port) }
+        connectionPreferences.edit().putString("port", port).apply()
+    }
+
+    fun updateTargetWifiName(value: String) {
+        val name = value.take(64)
+        _state.update { it.copy(targetWifiName = name) }
+        connectionPreferences.edit().putString("target_wifi_name", name).apply()
     }
 
     fun updateSlabNo(value: String) {
@@ -268,7 +282,7 @@ class MeasurementViewModel(application: Application) : AndroidViewModel(applicat
             measurementMutex.withLock {
                 sessionId = null
                 val old = _state.value
-                _state.value = MeasurementState(host = old.host, port = old.port, session = old.session,
+                _state.value = MeasurementState(targetWifiName = old.targetWifiName, host = old.host, port = old.port, session = old.session,
                     recentSessions = old.recentSessions, saveStatus = "新记录已就绪，请检查测点后连接")
             }
         }

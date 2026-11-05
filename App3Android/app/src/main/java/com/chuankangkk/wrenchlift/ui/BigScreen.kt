@@ -81,6 +81,7 @@ fun WrenchLiftApp(viewModel: MeasurementViewModel = viewModel()) {
             onSlabChange = viewModel::updateSlabNo,
             onPointChange = viewModel::updatePointNo,
             onWifiSettings = viewModel::openWifiSettings,
+            onWifiNameChange = viewModel::updateTargetWifiName,
             debugContent = {
         BigScreen(
             state = state,

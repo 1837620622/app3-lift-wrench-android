@@ -18,6 +18,7 @@ data class MeasuredPoint(
 )
 
 data class MeasurementState(
+    val targetWifiName: String = "",
     val persistedPointCount: Long = 0,
     val exportInProgress: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.Disconnected,

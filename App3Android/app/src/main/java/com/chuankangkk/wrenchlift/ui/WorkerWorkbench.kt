@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -23,6 +24,7 @@ import com.chuankangkk.wrenchlift.measurement.*
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /** 主页面只处理现场测量；协议控制与原始帧留在调试版的独立入口。 */
 @Composable
@@ -40,12 +42,23 @@ fun WorkerWorkbench(
     onPointChange: (String) -> Unit,
     onWifiSettings: () -> Unit,
     debugContent: @Composable () -> Unit,
+    onWifiNameChange: (String) -> Unit = {},
 ) {
     var page by rememberSaveable { mutableStateOf("measurement") }
     var confirmNew by remember { mutableStateOf(false) }
     BackHandler(enabled = page != "measurement") { page = "measurement" }
     val online = state.connectionState.isOnline
     val connecting = state.connectionState is ConnectionState.Connecting
+    var clockMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(online) {
+        while (online) {
+            clockMillis = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val ageSeconds = state.lastCurvePointReceiveTime?.let { ((clockMillis - it).coerceAtLeast(0) / 1000) }
+    val fresh = online && ageSeconds != null && ageSeconds <= 5
+    val connectionColor by animateColorAsState(if (fresh) AppColors.running else AppColors.textSecondary, label = "connectionStatus")
     Surface(color = AppColors.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -65,7 +78,9 @@ fun WorkerWorkbench(
             HorizontalDivider()
             when (page) {
                 "settings" -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("先连接扳手 Wi-Fi，再连接设备。板号和测点用于下一条新记录。")
+                    Text("先连接设备 Wi-Fi，再连接设备。名称只用于引导，协议与通信端口单独设置。")
+                    OutlinedTextField(state.targetWifiName, onWifiNameChange, label = { Text("目标 Wi-Fi 名称（可自定义）") }, placeholder = { Text("填写设备铭牌上的名称") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("wifi_name"))
+                    Text("当前 Wi-Fi：${state.currentWifiName}", color = AppColors.textSecondary)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(state.host, onHostChange, label = { Text("设备 IP") }, singleLine = true, enabled = !online && !connecting, modifier = Modifier.weight(2f))
                         OutlinedTextField(state.port, onPortChange, label = { Text("端口") }, singleLine = true, enabled = !online && !connecting, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
@@ -102,7 +117,7 @@ fun WorkerWorkbench(
                 "debug" -> if (BuildConfig.DEBUG) Box(Modifier.weight(1f).fillMaxWidth()) { debugContent() }
                 else -> {
                     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(state.connectionState.label, color = if (online) AppColors.running else AppColors.textSecondary, fontWeight = FontWeight.Bold)
+                        Text(state.connectionState.label, color = connectionColor, fontWeight = FontWeight.Bold)
                         Text("${state.session.slabNo} / ${state.session.pointNo}", modifier = Modifier.weight(1f), maxLines = 1)
                         Button(onClick = if (online) onDisconnect else onConnect, enabled = !connecting, modifier = Modifier.testTag("connect")) { Text(if (online) "结束采集" else if (connecting) "正在连接" else "连接并采集") }
                     }
@@ -117,7 +132,14 @@ fun WorkerWorkbench(
                     HorizontalDivider()
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(Modifier.weight(1f)) {
-                            Text(if (online) "实时回传 · 已入库 ${state.persistedPointCount} 点" else if (state.recentPoints.isNotEmpty()) "采集已停止 · 已保留数据" else "连接扳手后自动记录", fontSize = 13.sp)
+                            Text(when {
+                                fresh -> "实时回传 · 已入库 ${state.persistedPointCount} 点"
+                                online && ageSeconds != null -> "过程数据暂停 · ${ageSeconds} 秒前更新"
+                                online -> "已连接 · 等待过程数据"
+                                state.recentPoints.isNotEmpty() -> "采集已停止 · 已保留数据"
+                                state.targetWifiName.isNotBlank() -> "请连接 Wi-Fi：${state.targetWifiName}"
+                                else -> "先连接设备 Wi-Fi，再开始采集"
+                            }, fontSize = 13.sp, maxLines = 2)
                             Text("v${BuildConfig.VERSION_NAME}", fontSize = 10.sp, color = AppColors.textMuted)
                         }
                         TextButton(onClick = { confirmNew = true }, enabled = !online && !connecting && !state.exportInProgress, modifier = Modifier.testTag("new_record")) { Text("新建记录") }
