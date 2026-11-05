@@ -49,27 +49,13 @@ fun SplashScreen(modifier: Modifier = Modifier, animate: Boolean = true) {
     val fade = remember { Animatable(if (animate) 0f else 1f) }
     LaunchedEffect(Unit) { if (animate) fade.animateTo(1f, tween(420)) }
     BoxWithConstraints(modifier.fillMaxSize().background(SplashColors.background).testTag("splash")) {
-        // 构图对齐产品方启动页稿：上方主副标题，中间 T 形手把扳手，底部署名。
-        val imageHeight = maxHeight * 0.50f
-        val titleSize = (maxHeight.value * 0.095f).coerceIn(34f, 64f).sp
-        Column(
-            Modifier.fillMaxSize().alpha(fade.value).windowInsetsPadding(WindowInsets.safeDrawing),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Spacer(Modifier.weight(0.55f))
-            Text("WiFi 扳手", color = SplashColors.title, fontSize = titleSize, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Spacer(Modifier.height(4.dp))
-            Text("隔振器顶升调频采集", color = SplashColors.subtitle, fontSize = (titleSize.value * 0.45f).sp, letterSpacing = 3.sp)
-            Spacer(Modifier.weight(0.25f))
-            Image(
-                painter = painterResource(R.drawable.wifi_wrench_splash_t_handle),
-                contentDescription = "T 形手把 Wi‑Fi 扭矩扳手",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.height(imageHeight),
-            )
-            Spacer(Modifier.weight(0.6f))
-            Text("传康Kk · 免费供应", color = SplashColors.footer, fontSize = 14.sp, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 16.dp))
-        }
+        // 启动页直接使用产品方定稿 docs/design-renders/06-splash.jpg（标题/署名已烘焙在图内，不再叠字）。
+        Image(
+            painter = painterResource(R.drawable.wifi_wrench_splash_scene),
+            contentDescription = "WiFi 扳手 · 隔振器顶升调频采集 · 传康Kk 免费供应",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().alpha(fade.value),
+        )
     }
 }
 
