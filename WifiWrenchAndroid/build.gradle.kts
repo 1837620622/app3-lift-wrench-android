@@ -6,7 +6,6 @@ plugins {
 
 val wifiWrenchAndroidBuildRoot = providers.gradleProperty("wifi.wrench.android.buildRoot")
     .orElse(providers.environmentVariable("WIFI_WRENCH_ANDROID_BUILD_ROOT"))
-    .orElse(providers.environmentVariable("APP3_ANDROID_BUILD_ROOT"))
     .orNull
 if (!wifiWrenchAndroidBuildRoot.isNullOrBlank()) {
     layout.buildDirectory.set(file("$wifiWrenchAndroidBuildRoot/root"))

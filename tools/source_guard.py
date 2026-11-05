@@ -6,7 +6,7 @@ import sys
 root = pathlib.Path(__file__).resolve().parents[1]
 paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
 allowed_roots = ("WifiWrenchAndroid/", ".github/workflows/", "tools/", "docs/")
-allowed_files = {"README.md", "AGENTS.md", ".gitignore", ".gitattributes", "最新协议.docx", "App3Android"}  # symlink → WifiWrenchAndroid，兼容旧 CI workflow
+allowed_files = {"README.md", "AGENTS.md", ".gitignore", ".gitattributes", "最新协议.docx"}
 forbidden_extensions = {".dwg", ".dxf", ".sldprt", ".sldasm", ".pdf", ".db", ".sqlite", ".pcap", ".pcapng", ".csv", ".xlsx", ".jks", ".keystore", ".p12", ".pfx", ".pem", ".key", ".apk", ".exe"}
 errors = []
 for name in filter(None, paths):

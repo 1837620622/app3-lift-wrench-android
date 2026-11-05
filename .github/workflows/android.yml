@@ -1,5 +1,5 @@
 name: Android CI
-run-name: Android 0.2.0 build ${{ github.run_number }}
+run-name: Android 0.3.0 build ${{ github.run_number }}
 on:
   push:
     branches: [main]
@@ -12,7 +12,7 @@ concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
 env:
-  APP3_ANDROID_BUILD_ROOT: ${{ github.workspace }}/.build
+  WIFI_WRENCH_ANDROID_BUILD_ROOT: ${{ github.workspace }}/.build
   GRADLE_OPTS: -Dorg.gradle.daemon=false
 jobs:
   build:
@@ -40,28 +40,28 @@ jobs:
       - name: Prepare stable debug signing
         if: github.event_name != 'pull_request'
         env:
-          APP3_DEBUG_KEYSTORE_BASE64: ${{ secrets.APP3_DEBUG_KEYSTORE_BASE64 }}
-          APP3_DEBUG_STORE_PASSWORD: ${{ secrets.APP3_DEBUG_STORE_PASSWORD }}
+          WIFI_WRENCH_DEBUG_KEYSTORE_BASE64: ${{ secrets.WIFI_WRENCH_DEBUG_KEYSTORE_BASE64 }}
+          WIFI_WRENCH_DEBUG_STORE_PASSWORD: ${{ secrets.WIFI_WRENCH_DEBUG_STORE_PASSWORD }}
         run: python3 tools/prepare_debug_signing.py
       - name: Unit tests, lint and both build variants
-        working-directory: App3Android
+        working-directory: WifiWrenchAndroid
         env:
-          APP3_DEBUG_KEYSTORE: ${{ runner.temp }}/app3-debug.p12
-          APP3_DEBUG_STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.APP3_DEBUG_STORE_PASSWORD || '' }}
+          WIFI_WRENCH_DEBUG_KEYSTORE: ${{ runner.temp }}/wifi-wrench-debug.p12
+          WIFI_WRENCH_DEBUG_STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.WIFI_WRENCH_DEBUG_STORE_PASSWORD || '' }}
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease --stacktrace --console=plain -Papp3.versionCode=$((1000 + GITHUB_RUN_NUMBER))
+          ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease --stacktrace --console=plain -Pwifi.wrench.versionCode=$((1000 + GITHUB_RUN_NUMBER))
       - name: Verify APK signature and version
         run: |
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs .build/app/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging .build/app/outputs/apk/debug/app-debug.apk > .build/app/outputs/apk/debug/apk-metadata.txt
           grep -F "versionCode='$((1000 + GITHUB_RUN_NUMBER))'" .build/app/outputs/apk/debug/apk-metadata.txt
-          grep -F "versionName='0.2.0-debug.$((1000 + GITHUB_RUN_NUMBER))'" .build/app/outputs/apk/debug/apk-metadata.txt
+          grep -F "versionName='0.3.0-debug.$((1000 + GITHUB_RUN_NUMBER))'" .build/app/outputs/apk/debug/apk-metadata.txt
           sha256sum .build/app/outputs/apk/debug/app-debug.apk > .build/app/outputs/apk/debug/SHA256SUMS
       - name: APK and emulator test APK
         uses: actions/upload-artifact@v4
         with:
-          name: app3-debug-${{ github.run_number }}
+          name: wifi-wrench-debug-${{ github.run_number }}
           path: |
             .build/app/outputs/apk/debug/*.apk
             .build/app/outputs/apk/debug/apk-metadata.txt
@@ -103,7 +103,7 @@ jobs:
           java-version: '21'
       - uses: actions/download-artifact@v4
         with:
-          name: app3-debug-${{ github.run_number }}
+          name: wifi-wrench-debug-${{ github.run_number }}
           path: apk
       - name: Enable KVM
         run: |

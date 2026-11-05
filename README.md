@@ -22,9 +22,9 @@
 
 ## 当前状态
 
-**最新发布：[v0.2.0-build27](https://github.com/1837620622/wifi-wrench-android/releases/tag/v0.2.0-build27)**（[Actions build 27](https://github.com/1837620622/wifi-wrench-android/actions/runs/42039517946)：编译、单测、模拟器仪器测试通过）。含正式工人页；尚未用户视觉验收、尚未真机控制验证。
+**版本基线 0.3.0**（正式工人页）。上一包 [v0.2.0-build27](https://github.com/1837620622/wifi-wrench-android/releases/tag/v0.2.0-build27)；0.3.0 包随本轮 CI 绿后发布。尚未用户视觉验收、尚未真机控制验证。
 
-历史基线：功能基线 `b30f0e2` 对应 [Actions build 16](https://github.com/1837620622/wifi-wrench-android/actions/runs/42013640926)：65 项单元测试、API 28/35 仪器测试、Lint、Debug/Release 与签名检查通过。调试包曾用 `0.2.0-debug.1016`。
+历史基线：功能基线 `b30f0e2` 对应 [Actions build 16](https://github.com/1837620622/wifi-wrench-android/actions/runs/42013640926)。
 
 **2026-11-05：正式工人页已按设计规范实现（代码已写 / 本机编译与单测通过 / 截图自检），尚未用户视觉验收、尚未真机控制验证。** 逐项对照见 [docs/验收对照.md](docs/验收对照.md)：
 
@@ -64,7 +64,7 @@
 
 ## 使用与下载
 
-1. 打开 [Releases](https://github.com/1837620622/wifi-wrench-android/releases/latest)，下载 `WiFi-Wrench-0.2.0-build27-debug.apk`（可用同页 SHA256 校验）。备用：Actions 对应 run 的 Artifacts 里的 `app-debug.apk`（不要装 androidTest APK）。
+1. 打开 [Releases](https://github.com/1837620622/wifi-wrench-android/releases/latest)，下载最新 `WiFi-Wrench-*-debug.apk`（优先 0.3.0；可用同页 SHA256 校验）。备用：Actions 对应 run 的 Artifacts 里的 `app-debug.apk`（不要装 androidTest APK）。
 2. 先到系统连接扳手 Wi‑Fi；App **自适应探测** TCP（默认先试 `192.168.4.1:7888`，不通则自动换候选/短扫；正式界面不填、不选端口）。
 3. 「测点与记录」页填板号/测点 →「开始测量」；工作台里先开「远程」，再正转/反转（需确认），随时可「停止扳手」。
 4. 「导出 Excel」生成带原生图表的 `.xlsx`（全量过程点）；设置里可同时导出 CSV。曲线显示窗口不截断数据库全量。
@@ -72,14 +72,14 @@
 
 ## 源码与协议
 
-- `WifiWrenchAndroid/`：Android 工程目录（包名 `com.chuankangkk.wrenchlift`）。根目录 `App3Android` 为兼容旧 CI 的符号链接；Secrets/keyAlias 残留见接手说明；入口 MainActivity → WrenchLiftApp → `ui/worker/WifiWrenchWorkerApp`（DEBUG 可在 设置 → 调试工具 进 BigScreen 控制台）。
-- `最新协议.docx`：厂家 C 协议原文（文内标题仍可能带厂家旧称「App3」，仅作协议文本，**产品对外名是「WiFi 扳手」**）。
+- `WifiWrenchAndroid/`：Android 工程目录（包名 `com.chuankangkk.wrenchlift`）。入口 MainActivity → WrenchLiftApp → `ui/worker/WifiWrenchWorkerApp`（DEBUG 可在 设置 → 调试工具 进 BigScreen 控制台）。
+- `最新协议.docx`：厂家 C 协议原文（文内标题可能仍用厂家旧称，仅作协议文本，**勿改 docx**；**产品对外名是「WiFi 扳手」**）。
 - `docs/项目背景.md`：**背景第一页（二次开发从这进）**。
 - `docs/设计规范.md`：**UI 交接权威**（单屏分区、连接、视觉、协议映射、验收清单）。
 - `docs/验收对照.md`：实现方按验收清单逐项自检（证据与未验证项分开写）。
 - `docs/design-renders/`：产品方设计稿落位目录（可空）；**非**规范正文；**禁止**塞 AI 软件概念图当定稿。
 - `docs/reference-hardware/`：T 形手把真机参照（非 UI 稿）。
-- `docs/开发接手说明.md`：模块、禁忌、无硬件测试、**待改名清单**。
+- `docs/开发接手说明.md`：模块、禁忌、无硬件测试。
 - `docs/界面与导出优化方向.md`：锁定决策 + 功能码表 + 阶段。
 - `docs/项目背景与开发要求.md`：长约束。
 - `AGENTS.md`：Agent 执行规则。
@@ -98,4 +98,4 @@ cd WifiWrenchAndroid
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease
 ```
 
-版本基线 0.2.0；CI `versionCode=1000+run_number`。调试签名由 Secrets 提供。推送/发布需用户明确授权。
+版本基线 0.3.0；CI `versionCode=1000+run_number`。调试签名由 `WIFI_WRENCH_DEBUG_*` Secrets 提供。推送/发布需用户明确授权。

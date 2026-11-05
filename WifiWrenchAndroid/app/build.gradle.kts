@@ -5,7 +5,6 @@ plugins {
 }
 
 val wifiWrenchVersionCode = providers.gradleProperty("wifi.wrench.versionCode")
-    .orElse(providers.gradleProperty("app3.versionCode")) // 兼容旧 CI 参数名
     .orElse("2")
     .get()
     .toInt()
@@ -24,7 +23,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = wifiWrenchVersionCode
-        versionName = "0.2.0"
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -32,19 +31,14 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug.$wifiWrenchVersionCode"
-            // Secrets / keyAlias 仍用历史 APP3_* / app3-debug（绑定现有 keystore）；也接受 WIFI_WRENCH_DEBUG_*。
-            val keyPath = providers.environmentVariable("WIFI_WRENCH_DEBUG_KEYSTORE")
-                .orElse(providers.environmentVariable("APP3_DEBUG_KEYSTORE"))
-                .orNull
-            val keyPasswordValue = providers.environmentVariable("WIFI_WRENCH_DEBUG_STORE_PASSWORD")
-                .orElse(providers.environmentVariable("APP3_DEBUG_STORE_PASSWORD"))
-                .orNull
+            val keyPath = providers.environmentVariable("WIFI_WRENCH_DEBUG_KEYSTORE").orNull
+            val keyPasswordValue = providers.environmentVariable("WIFI_WRENCH_DEBUG_STORE_PASSWORD").orNull
             if (!keyPath.isNullOrBlank() && !keyPasswordValue.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("debug").apply {
                     storeFile = file(keyPath)
                     storeType = "PKCS12"
                     storePassword = keyPasswordValue
-                    keyAlias = "app3-debug" // keystore 内别名，改名需重签
+                    keyAlias = "wifi-wrench-debug"
                     keyPassword = keyPasswordValue
                 }
             }
