@@ -42,10 +42,10 @@ class WorkerWorkbenchTest {
         var exports = 0
         val points = List(50) { i -> MeasuredPoint(TorqueAnglePoint(i * 2.0, i, i.toDouble(), 1000L), 1, null, warningLevel = WarningLevel.WATCH, rawHex = "test-frame") }
         show(MeasurementState(recentPoints = points, currentTorqueNm = 98.0, currentAngleDeg = 49.0, persistedPointCount = 2505), onExport = { exports++ })
+        screenshot("worker-data")
         compose.onNodeWithTag("export").assertIsEnabled().performClick()
         compose.onNodeWithText("分离点：待数据分析").assertIsDisplayed()
         compose.runOnIdle { assertEquals(1, exports) }
-        screenshot("worker-data")
     }
 
     private fun show(state: MeasurementState, onConnect: () -> Unit = {}, onExport: () -> Unit = {}) {

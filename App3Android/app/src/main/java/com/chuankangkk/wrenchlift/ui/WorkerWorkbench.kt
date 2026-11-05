@@ -121,13 +121,18 @@ fun WorkerWorkbench(
                         Text("${state.session.slabNo} / ${state.session.pointNo}", modifier = Modifier.weight(1f), maxLines = 1)
                         Button(onClick = if (online) onDisconnect else onConnect, enabled = !connecting, modifier = Modifier.testTag("connect")) { Text(if (online) "结束采集" else if (connecting) "正在连接" else "连接并采集") }
                     }
-                    Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Column(Modifier.widthIn(min = 120.dp, max = 180.dp).fillMaxHeight(), verticalArrangement = Arrangement.SpaceEvenly) {
-                            Readout("扭矩", state.torqueReadoutText(), "N·m")
-                            Readout("转角", state.angleReadoutText(), "°")
-                            Text("分离点：待数据分析", color = AppColors.textSecondary, fontSize = 13.sp)
+                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp)) {
+                        val compactReadout = maxHeight < 190.dp
+                        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Column(Modifier.widthIn(min = 120.dp, max = 180.dp).fillMaxHeight(), verticalArrangement = Arrangement.SpaceEvenly) {
+                                Readout("扭矩", state.torqueReadoutText(), "N·m", compactReadout)
+                                Readout("转角", state.angleReadoutText(), "°", compactReadout)
+                            }
+                            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("分离点：待数据分析", color = AppColors.textSecondary, fontSize = 12.sp, maxLines = 1)
+                                EngineeringTrendChart(state.recentPoints, ChartMetric.TORQUE, modifier = Modifier.weight(1f).fillMaxWidth().testTag("torque_chart"))
+                            }
                         }
-                        EngineeringTrendChart(state.recentPoints, ChartMetric.TORQUE, modifier = Modifier.weight(1f).fillMaxHeight().testTag("torque_chart"))
                     }
                     HorizontalDivider()
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -155,9 +160,9 @@ fun WorkerWorkbench(
 }
 
 @Composable
-private fun Readout(label: String, value: String, unit: String) {
+private fun Readout(label: String, value: String, unit: String, compact: Boolean) {
     Column {
-        Text("$label $unit", color = AppColors.textSecondary, fontSize = 14.sp)
-        Text(value, fontSize = 32.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text("$label $unit", color = AppColors.textSecondary, fontSize = if (compact) 12.sp else 14.sp)
+        Text(value, fontSize = if (compact) 26.sp else 36.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
