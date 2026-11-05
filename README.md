@@ -36,7 +36,7 @@
 
 ## 源码与协议
 
-- `App3Android/`：Android 工程目录（工程目录名仍含 App3（待有 workflow 权限后改目录）；包名仍为 `com.chuankangkk.wrenchlift`，目录/类型名等见接手说明「待改名」）；入口 MainActivity → WrenchLiftApp → WorkerWorkbench（DEBUG 可进 BigScreen 控制台）。
+- `WifiWrenchAndroid/`：Android 工程目录（包名 `com.chuankangkk.wrenchlift`）。根目录 `App3Android` 为兼容旧 CI 的符号链接；Secrets/keyAlias 残留见接手说明；入口 MainActivity → WrenchLiftApp → WorkerWorkbench（DEBUG 可进 BigScreen 控制台）。
 - `最新协议.docx`：厂家 C 协议原文（文内标题仍可能带厂家旧称「App3」，仅作协议文本，**产品对外名是「WiFi 扳手」**）。
 - `docs/项目背景.md`：**背景第一页（二次开发从这进）**。
 - `docs/设计规范.md`：**UI 交接权威**（单屏分区、连接、视觉、协议映射、验收清单）。
@@ -57,7 +57,7 @@
 Java 21 + 工程内 Gradle wrapper + Android SDK（CI 安装）。可选本地：
 
 ```shell
-cd App3Android
+cd WifiWrenchAndroid
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease
 ```
 

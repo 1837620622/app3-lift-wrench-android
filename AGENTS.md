@@ -1,6 +1,6 @@
 # 项目执行规则（Agent）
 
-产品对外短名：**WiFi 扳手**（不再称 App3）。仓库：`1837620622/wifi-wrench-android`。工程目录：仍为 `App3Android/`（待改名）。
+产品对外短名：**WiFi 扳手**（不再称 App3）。仓库：`1837620622/wifi-wrench-android`。工程目录：`WifiWrenchAndroid/`。
 
 **先读** [docs/项目背景.md](docs/项目背景.md)。**UI 实现与验收以** [docs/设计规范.md](docs/设计规范.md) **为唯一权威**（视觉成品由产品方按设计规范自行设计；勿把概念渲染图塞进 docs）。再读 [docs/开发接手说明.md](docs/开发接手说明.md) 与 [docs/界面与导出优化方向.md](docs/界面与导出优化方向.md)。长约束见 [docs/项目背景与开发要求.md](docs/项目背景与开发要求.md)。
 
