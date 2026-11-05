@@ -30,11 +30,35 @@
 - 单横屏工作台：顶栏状态 + 返回；左扭矩/转角；中扭矩–转角曲线（按转角跨度自适应）；右远程、正转、反转、停止、参数、导出。
 - 远程门闩：未开 0x11 不能正/反转，正/反转二次确认，停止始终可点，结束会话 ≠ 停止扳手。
 - 参数侧滑（0x10，确认后写入）；导出 `.xlsx` 含 Excel 原生图表（全量不截断），CSV 在设置里可选。
-- 启动页与 App 图标为 T 形手把 Wi‑Fi 扭矩扳手（图标与 `docs/design-renders/00-app-icon.jpg` 一致，启动页构图按 `06-splash.jpg`；产品方定稿后替换位图即可）。
-- 观感按产品方 T 手把工业手机渲染：默认深色工业，20:9 三防手机横屏（如 914×411dp）单屏；强光现场可在设置切浅色。
+- App 图标素材与 `docs/design-renders/00-app-icon.jpg` **基本一致**（同构图，分辨率不同）。
+- 启动页：**代码叠中文文案**；位图 `wifi_wrench_splash_t_handle.png` **更接近图标**，与 `06-splash.jpg`（手机架在 T 手把上的场景渲染）**不一致**。产品方若要以 06 为定稿，需替换启动页位图或改构图。
+- 主台观感按 `01-workbench-hero.jpg` 对齐深色工业分区（左读数 / 中曲线 / 右控制）；仓库里尚无同构图真机截图，仅有概念渲染与合成自检。
 - 协议补充：0x05 错误码提示；0x50/0x51 脉冲扳手参数（设置里选扳手类型后开放，默认 0x10）。
 
 算法为数据充足后的 **Phase N+1**。
+
+## 视觉示意（设计渲染）
+
+交互/连接/验收仍以 [docs/设计规范.md](docs/设计规范.md) 为准。下列为 `docs/design-renders/` 示意，便于对照 App 素材是否一致。
+
+| 示意 | 与当前 App 素材 |
+| --- | --- |
+| 图标 `00-app-icon.jpg` | **一致** → `res/.../ic_launcher_foreground.png` |
+| 启动页 `06-splash.jpg` | **不一致**：App 启动位图接近图标构图，中文标题由界面代码绘制 |
+| 主台 `01-workbench-hero.jpg` | **分区方向一致**（概念渲染，非实机截图） |
+| 宣传短片 `04-promo.mp4` | 氛围片，非功能演示 |
+
+<p align="center">
+  <img src="docs/design-renders/00-app-icon.jpg" alt="App 图标渲染" width="220" />
+  &nbsp;
+  <img src="docs/design-renders/06-splash.jpg" alt="启动页渲染" width="420" />
+</p>
+
+<p align="center">
+  <img src="docs/design-renders/01-workbench-hero.jpg" alt="横屏主台渲染" width="720" />
+</p>
+
+真机外形参照：[docs/reference-hardware/t-handle-on-isolator.png](docs/reference-hardware/t-handle-on-isolator.png)
 
 ## 使用与下载
 
