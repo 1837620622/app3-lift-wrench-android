@@ -136,9 +136,11 @@ private fun HistoryRecordBlock(sessions: List<MeasurementEntity>) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PointValue("目标扭矩", session.targetTorqueNm.formatEvidence(), Modifier.weight(1f))
-                    PointValue("实际扭矩", session.actualTorqueNm.formatEvidence(), Modifier.weight(1f))
-                    PointValue("目标角度", session.targetAngleDeg.formatEvidence(), Modifier.weight(1f))
+                    // M2 的第一个扭矩字段是「预设扭矩实际值」（实测），不是目标设定，标签随模式变化。
+                    val m2 = session.wrenchMode == 0x02
+                    PointValue(if (m2) "预设扭矩实际" else "目标扭矩", session.targetTorqueNm.formatEvidence(), Modifier.weight(1f))
+                    PointValue("最终扭矩实际", session.actualTorqueNm.formatEvidence(), Modifier.weight(1f))
+                    PointValue(if (m2) "目标角度设置" else "目标角度", session.targetAngleDeg.formatEvidence(), Modifier.weight(1f))
                     PointValue("实际角度", session.actualAngleDeg.formatEvidence(), Modifier.weight(1f))
                 }
             }

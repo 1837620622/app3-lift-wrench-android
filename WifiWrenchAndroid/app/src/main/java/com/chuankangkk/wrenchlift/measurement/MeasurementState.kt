@@ -16,6 +16,8 @@ data class MeasuredPoint(
     val displacementMm: Double = 0.0,
     val warningLevel: WarningLevel,
     val rawHex: String,
+    /** 本点在整条记录里的序号（从 1 起，与导出「过程数据」序号一致；0 表示未知，按缓冲推算）。 */
+    val seq: Long = 0L,
 )
 
 data class MeasurementState(

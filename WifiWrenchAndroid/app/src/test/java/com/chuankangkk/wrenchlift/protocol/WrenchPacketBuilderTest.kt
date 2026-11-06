@@ -117,4 +117,45 @@ class WrenchPacketBuilderTest {
         val angle = runCatching { settings(200, 500, 360.0, 1.0) }.exceptionOrNull()
         assertEquals("角度下限不能大于上限", angle?.message)
     }
+
+    /** 超长的中文工位名不得被截成半个字符（UTF-8 续字节）。 */
+    @Test
+    fun longMultiByteStationNameIsNotCutMidCharacter() {
+        val settings = WifiWrenchParameterSettings(
+            stationName = "工位甲乙丙丁戊己庚辛壬癸",
+            mode = WifiWrenchParameterSettings.MODE_M1,
+            targetTorqueNm = 100,
+            torqueLowerNm = 0,
+            torqueUpperNm = 0,
+            targetAngleDeg = 0.0,
+            angleUpperDeg = 0.0,
+            angleLowerDeg = 0.0,
+        )
+        val payload = WrenchPacketBuilder.parameterSet(settings).payload
+        // 工位名占 payload[10..29]（20 字节）；每个汉字 3 字节，只能放 6 个完整字。
+        val field = payload.copyOfRange(10, 30).decodeToString().trimEnd('\u0000')
+        assertEquals("工位甲乙丙丁", field)
+        assertTrue(!field.contains('\uFFFD'))
+    }
+
+    /** 未知的产品号 / 员工号等不写入编造的数字：字段保持全零。 */
+    @Test
+    fun blankIdentifiersAreWrittenAsZerosNotInventedNumbers() {
+        val settings = WifiWrenchParameterSettings(
+            productId = "",
+            stationName = "",
+            employeeId = "",
+            toolSerial = "",
+            controllerSerial = "",
+            mode = WifiWrenchParameterSettings.MODE_M1,
+            targetTorqueNm = 100,
+            torqueLowerNm = 0,
+            torqueUpperNm = 0,
+            targetAngleDeg = 0.0,
+            angleUpperDeg = 0.0,
+            angleLowerDeg = 0.0,
+        )
+        val payload = WrenchPacketBuilder.parameterSet(settings).payload
+        assertTrue("标识区（0..59）应全零", payload.copyOfRange(0, 60).all { it == 0.toByte() })
+    }
 }

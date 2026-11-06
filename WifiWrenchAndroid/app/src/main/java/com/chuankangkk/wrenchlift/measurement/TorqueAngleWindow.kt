@@ -189,11 +189,12 @@ object TorqueAngleWindow {
         return result
     }
 
-    private fun MeasuredPoint.toChartPoint(seq: Long) = ChartPoint(
+    /** 记录序号优先用点上带的 [MeasuredPoint.seq]（结果帧也计入点数，缓冲推算会偏）；没有时才用 [fallbackSeq]。 */
+    private fun MeasuredPoint.toChartPoint(fallbackSeq: Long) = ChartPoint(
         angle = sourcePoint.angleDeg,
         torque = sourcePoint.torqueNm,
         receivedAtMillis = sourcePoint.timestampMillis,
-        seq = seq,
+        seq = if (seq > 0L) seq else fallbackSeq,
     )
 }
 
