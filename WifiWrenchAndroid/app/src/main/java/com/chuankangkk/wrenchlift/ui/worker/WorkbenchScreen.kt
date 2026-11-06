@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -65,6 +66,7 @@ import com.chuankangkk.wrenchlift.measurement.MeasurementState
 import com.chuankangkk.wrenchlift.measurement.MotionCommand
 import com.chuankangkk.wrenchlift.measurement.RemoteGate
 import com.chuankangkk.wrenchlift.measurement.TorqueAngleView
+import com.chuankangkk.wrenchlift.measurement.analysis.WorkingCondition
 import com.chuankangkk.wrenchlift.measurement.TorqueAngleWindow
 import com.chuankangkk.wrenchlift.measurement.WorkerText
 import com.chuankangkk.wrenchlift.measurement.hasWrenchMeasurementData
@@ -473,19 +475,67 @@ private fun ChartPanel(
     Panel(modifier, padding = PaddingValues(start = 8.dp, end = 8.dp, top = if (compact) 6.dp else 8.dp, bottom = 6.dp)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             // 宽：页签按内容宽靠左；窄 / 大字体：页签平分整行，字号按实测文字宽度收，不截断。
+            // 右侧工况徽标只在放得下时出现（按字体缩放后的宽度判断），窄屏让给页签；明细都在导出。
             val headerWidth = maxWidth
-            val wide = headerWidth / LocalDensity.current.fontScale >= 400.dp
-            ChartTabs(mode, onMode, fill = !wide, width = headerWidth, height = if (short) 36.dp else 40.dp)
+            val fontScale = LocalDensity.current.fontScale
+            val wide = headerWidth / fontScale >= 400.dp
+            val condition = view.condition?.takeIf { !view.isEmpty && it.current != null }
+            val badgeWidth = CONDITION_BADGE_WIDTH * fontScale.coerceAtMost(1.3f)
+            val showBadge = condition != null && headerWidth / fontScale >= 300.dp
+            val tabsWidth = if (showBadge && !wide) headerWidth - badgeWidth - 8.dp else headerWidth
+            val height = if (short) 36.dp else 40.dp
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(if (wide) Modifier else Modifier.width(tabsWidth)) {
+                    ChartTabs(mode, onMode, fill = !wide, width = tabsWidth, height = height)
+                }
+                if (showBadge && condition != null) {
+                    Spacer(Modifier.weight(1f).widthIn(min = 8.dp))
+                    ConditionBadge(condition, live, Modifier.widthIn(max = badgeWidth).height(height))
+                }
+            }
         }
         LiveTorqueChart(
             view = view,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 6.dp),
             emptyTitle = emptyTitle,
             emptyHint = emptyHint,
-            targetTorqueNm = state.lastResult?.targetTorqueNm?.takeIf { it > 0 },
+            // 只有 M1 结果帧里才有目标扭矩设定值；M2 的同一字段是预设扭矩实际值，不画成目标线。
+            targetTorqueNm = state.lastResult?.settingTorqueNm?.takeIf { it > 0 },
             mode = mode,
             live = live,
         )
+    }
+}
+
+private val CONDITION_BADGE_WIDTH = 128.dp
+
+/**
+ * 当前运行段末点工况（空程 / 加载 / 停转保压 / 卸载 …）+ 疑似打滑次数；颜色只分正常 / 注意 / 异常三档。
+ * 非实时（断开、延迟）时整体变暗，表示保留值。
+ */
+@Composable
+private fun ConditionBadge(condition: WorkingCondition.Result, live: Boolean, modifier: Modifier = Modifier) {
+    val p = palette
+    val phase = condition.current ?: return
+    val color = when (phase) {
+        WorkingCondition.Phase.LOADING -> p.accent
+        WorkingCondition.Phase.STALL, WorkingCondition.Phase.UNLOADING -> p.warn
+        WorkingCondition.Phase.TORQUE_DROP, WorkingCondition.Phase.FREE_SPIN -> p.danger
+        else -> p.textSecondary
+    }.let { if (live) it else it.copy(alpha = 0.6f) }
+    val slips = condition.count(WorkingCondition.EventKind.SLIP)
+    val text = if (slips > 0) "${phase.label} · 打滑 $slips" else phase.label
+    Row(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(p.panelSunken)
+            .padding(horizontal = 10.dp)
+            .testTag("condition_badge"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(if (slips > 0) p.danger else color))
+        Spacer(Modifier.width(6.dp))
+        FitText(text, WrenchType.labelStyle.copy(fontWeight = FontWeight.Medium), color = if (slips > 0) p.danger else color, minSize = 10.sp)
     }
 }
 

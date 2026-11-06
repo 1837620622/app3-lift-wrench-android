@@ -1,6 +1,7 @@
 package com.chuankangkk.wrenchlift.measurement
 
 import com.chuankangkk.wrenchlift.measurement.analysis.LoadingAnalysis
+import com.chuankangkk.wrenchlift.measurement.analysis.WorkingCondition
 import kotlin.math.max
 import kotlin.math.min
 
@@ -14,6 +15,7 @@ import kotlin.math.min
  * - 段内接收间隔超过 [DASH_GAP_MILLIS]（0x12 约每秒一帧，漏了一帧以上）记为「数据间断」，画虚线连接，
  *   与「转折候选」的标记完全不同；
  * - 当前段另做加载分析（[LoadingAnalysis]）：转折候选与局部斜率，只作参考、未验证；
+ * - 当前段另做工况划分（[WorkingCondition]）：界面只显示末点工况与疑似打滑次数，明细在导出；
  * - 横轴按当前段转角跨度自适应；跨度超过 [MAX_VISIBLE_SPAN_DEG] 时只看最近这一段跨度；
  * - 点太多时按序号分桶保留每桶最小/最大扭矩，保住峰谷形态，不插值、不造点。
  */
@@ -128,6 +130,11 @@ object TorqueAngleWindow {
                 DoubleArray(latestSegment.size) { latestSegment[it].sourcePoint.angleDeg },
                 DoubleArray(latestSegment.size) { latestSegment[it].sourcePoint.torqueNm },
             ),
+            condition = WorkingCondition.classify(
+                DoubleArray(latestSegment.size) { latestSegment[it].sourcePoint.angleDeg },
+                DoubleArray(latestSegment.size) { latestSegment[it].sourcePoint.torqueNm },
+                LongArray(latestSegment.size) { latestSegment[it].sourcePoint.timestampMillis },
+            ),
         )
     }
 
@@ -217,6 +224,8 @@ data class TorqueAngleView(
     val currentPointCount: Int = 0,
     /** 当前运行段的加载分析（转折候选 + 局部斜率），只作参考、未验证。 */
     val analysis: LoadingAnalysis.Result? = null,
+    /** 当前运行段的工况划分（开发默认阈值，待真机标定）。 */
+    val condition: WorkingCondition.Result? = null,
 ) {
     val isEmpty: Boolean get() = latest == null
 

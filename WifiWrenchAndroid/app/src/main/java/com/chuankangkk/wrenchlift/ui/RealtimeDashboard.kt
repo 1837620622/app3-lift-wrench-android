@@ -527,7 +527,8 @@ private fun EvidenceCell(
 private fun WrenchSettingSyncBand(state: MeasurementState) {
     val result = state.lastResult
     val pulse = state.lastPulseResult
-    val targetTorque = result?.targetTorqueNm ?: pulse?.targetTorqueNm
+    // M2 结果帧的 28-29 是预设扭矩实际值，不是目标扭矩设定。
+    val targetTorque = result?.settingTorqueNm ?: pulse?.targetTorqueNm
     val actualTorque = result?.actualTorqueNm ?: pulse?.actualTorqueNm
     val targetAngle = result?.targetAngleDeg
     val actualAngle = result?.actualAngleDeg ?: pulse?.actualAngleDeg

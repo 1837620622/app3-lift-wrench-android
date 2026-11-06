@@ -120,7 +120,21 @@ data class PulseResultFrame(
     val actualTorqueNm: Double?,
     val actualAngleDeg: Double?,
     val rawHex: String,
-)
+) {
+    val modeText: String get() = modeLabel(mode)
+
+    companion object {
+        /** 协议 0x55 字节 27：参数模式（RC283F / RCH 驱动器）。 */
+        fun modeLabel(mode: Int?): String = when (mode) {
+            0x00 -> "RC283F 扭矩模式"
+            0x01 -> "定点硬连接(H)"
+            0x02 -> "定点软连接(S)"
+            0x03 -> "RCH MP 任意参数"
+            null -> "模式未知"
+            else -> "模式 0x%02X（协议未定义）".format(mode)
+        }
+    }
+}
 
 object PulseResultFrameDecoder {
     fun decode(packet: WrenchPacket): PulseResultFrame {
