@@ -58,7 +58,7 @@ class WorkerTextTest {
         assertEquals(2.0, small.step, 0.0)
         assertEquals("2.5", ChartAxis.label(2.5, 0.5))
         assertEquals("200", ChartAxis.label(200.0, 50.0))
-        // 回归：步长 0.25 / 0.05 时标签必须有足够小数位，不能把 0.25 标成 0.2、0.75 标成 0.8。
+        // 回归：步长 0.25 / 0.05 时标签必须有足够小数位，不能把 0.25 标成 0.3 之类的错值。
         val slope = ChartAxis.niceTicks(0.0, 1.2, 5)
         assertEquals(0.25, slope.step, 1e-12)
         assertEquals(listOf("0.00", "0.25", "0.50", "0.75", "1.00", "1.25"), slope.values.map { ChartAxis.label(it, slope.step) })
