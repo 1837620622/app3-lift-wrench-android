@@ -46,8 +46,10 @@ data class WrenchPalette(
     val chartAxis: Color,
     val chartLine: Color,
     val chartLineOld: Color,
-    /** 转角曲线（转角–序号图）用蓝色，与扭矩青绿区分；与导出图同色系。 */
+    /** 斜率曲线用蓝色，与扭矩青绿区分；与导出图同色系。 */
     val chartAngle: Color,
+    /** 转折候选（未验证）专用紫色：与扭矩青绿、斜率蓝、目标琥珀、报错红都区分开。 */
+    val chartCandidate: Color,
     val scrim: Color,
 )
 
@@ -75,6 +77,7 @@ val LightIndustrialPalette = WrenchPalette(
     chartLine = Color(0xFF0D9B8A),
     chartLineOld = Color(0xFFB4BEC7),
     chartAngle = Color(0xFF3A6EA5),
+    chartCandidate = Color(0xFF9A4FC2),
     scrim = Color(0x661B1F24),
 )
 
@@ -103,6 +106,7 @@ val DarkIndustrialPalette = WrenchPalette(
     chartLine = Color(0xFF2BB7A9),
     chartLineOld = Color(0xFF3B4650),
     chartAngle = Color(0xFF6FA8DC),
+    chartCandidate = Color(0xFFC79BF2),
     scrim = Color(0xB3000000),
 )
 

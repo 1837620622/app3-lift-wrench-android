@@ -73,6 +73,14 @@ object WorkerSamples {
         )
     }
 
+    /** 一段加载中间停了 6 秒（漏帧/暂停）：用来看段内「数据间断」虚线。 */
+    fun liveWithGap(nowMillis: Long = System.currentTimeMillis()): MeasurementState {
+        val points = loadingCurve(420).mapIndexed { i, point ->
+            if (i < 200) point else point.copy(sourcePoint = point.sourcePoint.copy(timestampMillis = point.sourcePoint.timestampMillis + 6_000L))
+        }
+        return live(remote = true, motion = MotionCommand.FORWARD, nowMillis = nowMillis).copy(recentPoints = points)
+    }
+
     fun result() = com.chuankangkk.wrenchlift.protocol.ResultFrameDecoder.decode(
         com.chuankangkk.wrenchlift.protocol.TestPacketFactory.resultFrame(0x00, "0000000000", 1, 343, 377),
     )

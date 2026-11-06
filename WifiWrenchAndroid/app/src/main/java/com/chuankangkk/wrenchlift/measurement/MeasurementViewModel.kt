@@ -109,6 +109,7 @@ class MeasurementViewModel @JvmOverloads constructor(
     private var sessionId: Long? = null
     private var connectionMode: String = "未连接"
     private var lastControl: String = ""
+    private var lastControlAtMillis: Long = 0L
     private val sessionMutex = Mutex()
     private val measurementMutex = Mutex()
     private val historyLimit = MutableStateFlow(20)
@@ -1021,6 +1022,7 @@ class MeasurementViewModel @JvmOverloads constructor(
     ) {
         viewModelScope.launch {
             lastControl = label
+            lastControlAtMillis = System.currentTimeMillis()
             runCatching {
                 connection.send(packet)
             }.onSuccess {
@@ -1116,7 +1118,15 @@ class MeasurementViewModel @JvmOverloads constructor(
         packetJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             target.incomingPackets.collect { packet ->
                 try {
-                    measurementMutex.withLock { handlePacket(packet) }
+                    // 0x15 要在 0.5 秒内回 0x17，否则扳手会把结果另存：能解析就先确认，再排队入库。
+                    val resultAck = if (packet.functionCode == WrenchPacket.FUNC_RESULT &&
+                        runCatching { ResultFrameDecoder.decode(packet) }.isSuccess
+                    ) {
+                        runCatching { target.send(WrenchPacketBuilder.resultAck()) }
+                    } else {
+                        null
+                    }
+                    measurementMutex.withLock { handlePacket(packet, resultAck) }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (throwable: Throwable) {
@@ -1129,7 +1139,7 @@ class MeasurementViewModel @JvmOverloads constructor(
         }
     }
 
-    private suspend fun handlePacket(packet: WrenchPacket) {
+    private suspend fun handlePacket(packet: WrenchPacket, resultAck: Result<Unit>? = null) {
         val now = System.currentTimeMillis()
         val waiting = _state.value
         if (waiting.linkPhase == LinkPhase.WAITING_REPLY && waiting.connectionState.isOnline) {
@@ -1157,8 +1167,10 @@ class MeasurementViewModel @JvmOverloads constructor(
         when (packet.functionCode) {
             WrenchPacket.FUNC_ACK -> {
                 val ack = AckDecoder.decode(packet)
+                // 0x06 不带被应答的功能码：只把 NAK 记到最近 3 秒内发出的操作上，避免心跳等的应答误关远程。
+                val recent = lastControl.isNotBlank() && now - lastControlAtMillis <= NAK_ATTRIBUTION_MILLIS
                 _state.update {
-                    val rejected = !ack.isAck
+                    val rejected = !ack.isAck && recent
                     it.copy(
                         lastProtocolSummary = "设备应答 ${ack.label}",
                         remoteEnabled = if (rejected && lastControl == LABEL_REMOTE_ON) false else it.remoteEnabled,
@@ -1169,7 +1181,7 @@ class MeasurementViewModel @JvmOverloads constructor(
                 appendLog("收到设备应答：${ack.label}")
             }
             WrenchPacket.FUNC_TORQUE_ANGLE -> handleTorqueAngle(packet, now)
-            WrenchPacket.FUNC_RESULT -> handleResult(packet, now)
+            WrenchPacket.FUNC_RESULT -> handleResult(packet, now, resultAck)
             WrenchPacket.FUNC_TIME_REQUEST -> {
                 runCatching {
                     connection.send(WrenchPacketBuilder.timeSync())
@@ -1238,6 +1250,7 @@ class MeasurementViewModel @JvmOverloads constructor(
         val newMeasuredPoints = mutableListOf<MeasuredPoint>()
         val historyBefore = _state.value.recentPoints.map { it.sourcePoint }.toMutableList()
         var latestCalculation: ForceCalculationResult? = null
+        val entities = ArrayList<TorquePointEntity>(decoded.points.size)
 
         decoded.points.forEach { point ->
             val result = calculator.calculate(point, historyBefore)
@@ -1254,7 +1267,7 @@ class MeasurementViewModel @JvmOverloads constructor(
             latestCalculation = result
             historyBefore += point
             newMeasuredPoints += measuredPoint
-            repository.savePoint(
+            entities.add(
                 TorquePointEntity(
                     sessionId = activeSessionId,
                     timestampMillis = point.timestampMillis,
@@ -1270,6 +1283,7 @@ class MeasurementViewModel @JvmOverloads constructor(
                 ),
             )
         }
+        repository.savePoints(entities)
 
         val latest = newMeasuredPoints.lastOrNull() ?: return
         val latestResult = latestCalculation ?: return
@@ -1295,9 +1309,9 @@ class MeasurementViewModel @JvmOverloads constructor(
         }
     }
 
-    private suspend fun handleResult(packet: WrenchPacket, now: Long) {
+    private suspend fun handleResult(packet: WrenchPacket, now: Long, preAck: Result<Unit>?) {
         val result = ResultFrameDecoder.decode(packet)
-        val ackResult = runCatching {
+        val ackResult = preAck ?: runCatching {
             connection.send(WrenchPacketBuilder.resultAck())
         }
         val activeSessionId = sessionId ?: ensureSession(connectionMode)
@@ -1415,7 +1429,8 @@ class MeasurementViewModel @JvmOverloads constructor(
             ),
         )
         _state.update { old ->
-            val merged = TorqueAngleWindow.append(old.recentPoints, listOf(measuredPoint))
+            // 结果帧的实际转角口径未经真机确认（可能从阈值扭矩起算），只入库、不并进实时曲线，
+            // 以免在过程曲线上造出假点或假断点；过程曲线与转折候选只用 0x12。
             old.copy(
                 currentBoltNo = boltNo,
                 currentTorqueNm = sourcePoint.torqueNm,
@@ -1426,9 +1441,7 @@ class MeasurementViewModel @JvmOverloads constructor(
                 currentDisplacementMm = measuredPoint.displacementMm,
                 warningLevel = result.warningLevel,
                 warningMessage = result.message,
-                lastCurvePointReceiveTime = now,
                 persistedPointCount = old.persistedPointCount + 1,
-                recentPoints = merged,
                 saveStatus = "已保存扳手结果点，原始结果帧已入库",
             )
         }
@@ -1533,6 +1546,8 @@ class MeasurementViewModel @JvmOverloads constructor(
         const val LABEL_REVERSE = "反转"
         const val LABEL_STOP = "停止扳手"
         const val LABEL_PARAMS = "写入扳手参数"
+        /** 0x06 应答只算到这段时间内发出的操作上。 */
+        const val NAK_ATTRIBUTION_MILLIS = 3_000L
     }
 }
 

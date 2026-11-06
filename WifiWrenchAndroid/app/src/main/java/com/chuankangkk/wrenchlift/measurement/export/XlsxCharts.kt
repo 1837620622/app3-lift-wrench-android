@@ -15,7 +15,25 @@ internal sealed interface ChartSpec {
         val xValues: List<Double?>,
         val yValues: List<Double?>,
         val color: String,
+        /** 叠加系列（如转折候选点：只画标记不连线）。 */
+        val extra: List<ScatterSeries> = emptyList(),
+        /** 扭矩/转角为协议无符号量，纵轴从 0 起；斜率可为负，不强制。 */
+        val yMinZero: Boolean = true,
+        /** 多段叠加图即使只有一条系列也显示图例（写明是第几段）。 */
+        val legend: Boolean = false,
     ) : ChartSpec
+
+    data class ScatterSeries(
+        val name: String,
+        val xRef: String,
+        val yRef: String,
+        val xValues: List<Double?>,
+        val yValues: List<Double?>,
+        val color: String,
+        val markerOnly: Boolean,
+        /** 参考线（如判定阈值）用虚线。 */
+        val dashed: Boolean = false,
+    )
 
     data class Bar(
         override val title: String,
@@ -46,6 +64,10 @@ internal object ChartXml {
             is ChartSpec.Bar -> bar(spec)
         }
         append("</c:plotArea>")
+        // CT_Chart 顺序：plotArea 之后才是 legend；只有叠加了候选等系列时才需要图例。
+        if (spec is ChartSpec.Scatter && (spec.extra.isNotEmpty() || spec.legend)) {
+            append("<c:legend><c:legendPos val=\"b\"/><c:overlay val=\"0\"/></c:legend>")
+        }
         append("<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/>")
         append("</c:chart>")
         append("<c:spPr><a:solidFill><a:srgbClr val=\"FFFFFF\"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val=\"D7DDE3\"/></a:solidFill></a:ln></c:spPr>")
@@ -61,10 +83,25 @@ internal object ChartXml {
         append("<c:xVal>").append(numRef(spec.xRef, spec.xValues)).append("</c:xVal>")
         append("<c:yVal>").append(numRef(spec.yRef, spec.yValues)).append("</c:yVal>")
         append("<c:smooth val=\"0\"/></c:ser>")
+        spec.extra.forEachIndexed { index, extra ->
+            append("<c:ser><c:idx val=\"${index + 1}\"/><c:order val=\"${index + 1}\"/>")
+            append("<c:tx><c:v>${Xml.escape(extra.name)}</c:v></c:tx>")
+            if (extra.markerOnly) {
+                append("<c:spPr><a:ln w=\"19050\"><a:noFill/></a:ln></c:spPr>")
+                append("<c:marker><c:symbol val=\"diamond\"/><c:size val=\"9\"/>")
+                append("<c:spPr><a:solidFill><a:srgbClr val=\"${extra.color}\"/></a:solidFill><a:ln w=\"9525\"><a:solidFill><a:srgbClr val=\"${extra.color}\"/></a:solidFill></a:ln></c:spPr></c:marker>")
+            } else {
+                append(lineProps(extra.color, extra.dashed))
+                append("<c:marker><c:symbol val=\"none\"/></c:marker>")
+            }
+            append("<c:xVal>").append(numRef(extra.xRef, extra.xValues)).append("</c:xVal>")
+            append("<c:yVal>").append(numRef(extra.yRef, extra.yValues)).append("</c:yVal>")
+            append("<c:smooth val=\"0\"/></c:ser>")
+        }
         append("<c:axId val=\"$X_AXIS_ID\"/><c:axId val=\"$Y_AXIS_ID\"/></c:scatterChart>")
         append(valueAxis(X_AXIS_ID, Y_AXIS_ID, "b", spec.xTitle, gridlines = false))
         // 扭矩/转角为协议无符号量：纵轴从 0 起，避免自动缩放夸大差异。
-        append(valueAxis(Y_AXIS_ID, X_AXIS_ID, "l", spec.yTitle, gridlines = true, minZero = true))
+        append(valueAxis(Y_AXIS_ID, X_AXIS_ID, "l", spec.yTitle, gridlines = true, minZero = spec.yMinZero))
     }
 
     private fun StringBuilder.bar(spec: ChartSpec.Bar) {
@@ -110,8 +147,10 @@ internal object ChartXml {
     private fun axisLine(): String =
         "<c:spPr><a:ln w=\"9525\"><a:solidFill><a:srgbClr val=\"8A96A3\"/></a:solidFill></a:ln></c:spPr>"
 
-    private fun lineProps(color: String): String =
-        "<c:spPr><a:ln w=\"19050\" cap=\"rnd\"><a:solidFill><a:srgbClr val=\"$color\"/></a:solidFill><a:round/></a:ln></c:spPr>"
+    // CT_LineProperties 顺序：fill → prstDash → join。
+    private fun lineProps(color: String, dashed: Boolean = false): String =
+        "<c:spPr><a:ln w=\"19050\" cap=\"rnd\"><a:solidFill><a:srgbClr val=\"$color\"/></a:solidFill>" +
+            (if (dashed) "<a:prstDash val=\"dash\"/>" else "") + "<a:round/></a:ln></c:spPr>"
 
     private fun title(text: String, size: Int): String =
         "<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"$size\" b=\"1\"/></a:pPr>" +

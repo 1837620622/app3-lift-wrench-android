@@ -472,8 +472,7 @@ private fun ChartPanel(
     }
     Panel(modifier, padding = PaddingValues(start = 8.dp, end = 8.dp, top = if (compact) 6.dp else 8.dp, bottom = 6.dp)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            // 宽：三个页签按内容宽，右侧放图例；窄 / 大字体：页签平分整行，字号随宽度收。
-            // 宽：三个页签按内容宽靠左；窄 / 大字体：页签平分整行，字号按实测文字宽度收，不截断。
+            // 宽：页签按内容宽靠左；窄 / 大字体：页签平分整行，字号按实测文字宽度收，不截断。
             val headerWidth = maxWidth
             val wide = headerWidth / LocalDensity.current.fontScale >= 400.dp
             ChartTabs(mode, onMode, fill = !wide, width = headerWidth, height = if (short) 36.dp else 40.dp)
@@ -490,13 +489,13 @@ private fun ChartPanel(
     }
 }
 
-/** 主图关系切换：扭矩–转角（默认）/ 扭矩–序号 / 转角–序号。 */
+/** 主图关系切换：扭矩–转角（默认）/ 斜率–转角。 */
 @Composable
 private fun ChartTabs(selected: ChartMode, onSelect: (ChartMode) -> Unit, fill: Boolean, width: Dp, height: Dp) {
     val p = palette
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
-    // 平分时：三个页签共用一个字号，按实测最宽页签（选中态半粗）逐级缩到放得下，最小 10sp。
+    // 平分时：各页签共用一个字号，按实测最宽页签（选中态半粗）逐级缩到放得下，最小 10sp。
     // 量和画用同一个 TextStyle；中文宽度差 1px 就会把末字挤到第二行被吞掉，所以还要 softWrap=false。
     fun tabStyle(sp: Float, on: Boolean) = TextStyle(
         fontSize = sp.sp, lineHeight = (sp + 4f).sp,
@@ -504,7 +503,7 @@ private fun ChartTabs(selected: ChartMode, onSelect: (ChartMode) -> Unit, fill: 
     )
     val fontSp = remember(fill, width, density) {
         if (!fill) return@remember 15f
-        val availPx = with(density) { ((width - 6.dp) / 3 - 8.dp).toPx() }
+        val availPx = with(density) { ((width - 6.dp) / ChartMode.entries.size - 8.dp).toPx() }
         var sp = 15f
         while (sp > 10f && ChartMode.entries.maxOf { measurer.measure(it.tab, tabStyle(sp, true), maxLines = 1, softWrap = false).size.width } > availPx) sp -= 0.5f
         sp

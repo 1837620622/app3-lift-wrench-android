@@ -26,6 +26,9 @@ data class WifiWrenchParameterSettings(
         require(angleToProtocol(targetAngleDeg) in 0..65535) { "目标角度超出协议范围" }
         require(angleToProtocol(angleUpperDeg) in 0..65535) { "角度上限超出协议范围" }
         require(angleToProtocol(angleLowerDeg) in 0..65535) { "角度下限超出协议范围" }
+        // 协议：上下限填 0 表示不受该项控制；两项都填时下限不能大于上限，否则扳手一启动就会停机。
+        require(torqueLowerNm == 0 || torqueUpperNm == 0 || torqueLowerNm <= torqueUpperNm) { "扭矩下限不能大于上限" }
+        require(angleLowerDeg <= 0.0 || angleUpperDeg <= 0.0 || angleLowerDeg <= angleUpperDeg) { "角度下限不能大于上限" }
     }
 
     companion object {

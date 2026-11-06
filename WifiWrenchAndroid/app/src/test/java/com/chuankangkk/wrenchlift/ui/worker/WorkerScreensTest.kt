@@ -181,17 +181,45 @@ class WorkerScreensTest {
 
     @Test
     @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
-    fun chartSwitchesBetweenTorqueAngleAndSequenceViews() {
+    fun chartSwitchesBetweenTorqueAngleAndSlopeViews() {
         show(WorkerSamples.liveTwoRuns())
         compose.onNodeWithTag("chart_tabs").assertIsDisplayed()
-        compose.onNodeWithContentDescription("扭矩–转角实时曲线").assertExists()
+        compose.onNodeWithContentDescription("扭矩–转角实时曲线", substring = true).assertExists()
         capture("chart-torque-angle-two-runs")
-        compose.onNodeWithTag("chart_mode_torque_seq").performClick()
-        compose.onNodeWithContentDescription("扭矩–序号实时曲线").assertExists()
-        capture("chart-torque-seq")
-        compose.onNodeWithTag("chart_mode_angle_seq").performClick()
-        compose.onNodeWithContentDescription("转角–序号实时曲线").assertExists()
-        capture("chart-angle-seq")
+        compose.onNodeWithTag("chart_mode_slope_angle").performClick()
+        compose.onNodeWithContentDescription("斜率–转角实时曲线", substring = true).assertExists()
+        capture("chart-slope-angle-two-runs")
+        // 「扭矩–序号 / 转角–序号」已移除：主屏只有两种关系，都以转角为横轴。
+        assertEquals(listOf(ChartMode.TORQUE_ANGLE, ChartMode.SLOPE_ANGLE), ChartMode.entries.toList())
+        ChartMode.entries.forEach { compose.onNodeWithTag("chart_mode_${it.name.lowercase()}").assertIsDisplayed() }
+        assertEquals(0, compose.onAllNodesWithText("序号", substring = true).fetchSemanticsNodes().size)
+    }
+
+    /** 斜率明显变化的加载曲线：图上标出转折候选，写明「未验证」，全屏不出现「平衡点」字样。 */
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
+    fun slopeChangeIsMarkedAsUnverifiedCandidateNotBalancePoint() {
+        show(WorkerSamples.live(remote = true, motion = MotionCommand.FORWARD))
+        val chart = compose.onNodeWithContentDescription("转折候选", substring = true)
+        chart.assertExists()
+        val description = chart.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription].single()
+        assertTrue(description, description.contains("未验证"))
+        val angle = Regex("候选 ([\\d.]+)°").find(description)!!.groupValues[1].toDouble()
+        assertTrue("样例曲线在 220° 处变缓，候选 $angle°", angle in 205.0..235.0)
+        assertEquals(0, compose.onAllNodesWithText("平衡点", substring = true).fetchSemanticsNodes().size)
+        capture("chart-candidate-torque-angle")
+        compose.onNodeWithTag("chart_mode_slope_angle").performClick()
+        compose.onNodeWithContentDescription("斜率–转角实时曲线，转折候选", substring = true).assertExists()
+        capture("chart-candidate-slope-angle")
+    }
+
+    /** 段内超过 2.5 秒没收到数据：曲线在那里画虚线（截图核对），且数据点不丢。 */
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
+    fun dataGapInsideARunIsDrawnDashed() {
+        show(WorkerSamples.liveWithGap())
+        compose.onNodeWithContentDescription("扭矩–转角实时曲线", substring = true).assertExists()
+        capture("chart-data-gap")
     }
 
     @Test fun controlFeedbackShowsInControlColumnStatusLine() {

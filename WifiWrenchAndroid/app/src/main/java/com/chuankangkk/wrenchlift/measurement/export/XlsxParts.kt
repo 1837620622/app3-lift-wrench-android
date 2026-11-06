@@ -76,7 +76,8 @@ internal sealed interface Cell {
     data object Blank : Cell
 }
 
-internal fun num(value: Number?): Cell = value?.toDouble()?.let { Cell.Num(it) } ?: Cell.Blank
+/** NaN / 无穷不是 Excel 合法数值：一律写成空单元格（图上为断点）。 */
+internal fun num(value: Number?): Cell = value?.toDouble()?.takeIf { it.isFinite() }?.let { Cell.Num(it) } ?: Cell.Blank
 internal fun text(value: String?): Cell = if (value.isNullOrEmpty()) Cell.Blank else Cell.Text(value)
 
 /** Excel 日期时间单元格（序列值 + 日期格式），按 Asia/Shanghai 本地时间。 */

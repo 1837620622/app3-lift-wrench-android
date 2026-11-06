@@ -102,4 +102,19 @@ class WrenchPacketBuilderTest {
         )
         assertTrue(Checksum.isValid(packet.toFrame()))
     }
+    /** 协议：上下限填 0 表示不受控；两项都填时下限大于上限会让扳手一启动就停机，App 侧拦截。 */
+    @Test
+    fun parameterLimitsMustBeOrderedUnlessZero() {
+        fun settings(tl: Int, tu: Int, al: Double, au: Double) = WifiWrenchParameterSettings(
+            mode = WifiWrenchParameterSettings.MODE_M2, targetTorqueNm = 180, torqueLowerNm = tl, torqueUpperNm = tu,
+            targetAngleDeg = 90.0, angleUpperDeg = au, angleLowerDeg = al,
+        )
+        settings(200, 500, 1.0, 360.0)
+        settings(0, 500, 0.0, 360.0)
+        settings(200, 0, 1.0, 0.0)
+        val torque = runCatching { settings(500, 200, 1.0, 360.0) }.exceptionOrNull()
+        assertEquals("扭矩下限不能大于上限", torque?.message)
+        val angle = runCatching { settings(200, 500, 360.0, 1.0) }.exceptionOrNull()
+        assertEquals("角度下限不能大于上限", angle?.message)
+    }
 }

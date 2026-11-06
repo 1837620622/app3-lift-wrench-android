@@ -84,4 +84,41 @@ class TorqueAngleWindowTest {
         assertEquals(points.last(), reduced.last())
         assertEquals(reduced.sortedBy { it.angle }, reduced) // 保持原顺序
     }
+    /** 一次只拧了 30° 就停，下一次从 0 起：回落不到 45° 也要分段，不能连回原点画出假折线。 */
+    @Test fun shortRunFollowedByRestartFromZeroIsSplit() {
+        val first = List(31) { point(it.toDouble(), it * 3.0, t = it * 100L) }
+        val second = List(20) { point(it.toDouble(), it * 2.0, t = 4_000L + it * 100L) }
+        assertEquals(2, TorqueAngleWindow.segments(first + second).size)
+        // 正常加载里转角一步不会从 ≥5° 掉到 ≤1°；小抖动不分段。
+        val jitter = listOf(point(6.0, 10.0), point(5.0, 11.0), point(6.0, 12.0), point(7.0, 13.0))
+        assertEquals(1, TorqueAngleWindow.segments(jitter).size)
+        assertTrue(TorqueAngleWindow.isNewRun(1, 6.0, 0, 1, 1.0, 100))
+        assertFalse(TorqueAngleWindow.isNewRun(1, 4.0, 0, 1, 1.0, 100))
+        assertTrue("长间隔", TorqueAngleWindow.isNewRun(1, 6.0, 0, 1, 7.0, TorqueAngleWindow.GAP_MILLIS + 1))
+    }
+
+    /** 段内 2.5–10 秒没数据：仍是同一段，但记下间断位置（画虚线）；先切片再抽样，抽样不会把正常点误判成间断。 */
+    @Test fun gapInsideRunIsMarkedAndSurvivesDecimation() {
+        val before = List(1_500) { point(it * 0.1, it * 0.2, t = it * 100L) }
+        val after = List(1_500) { point(150.0 + it * 0.1, 300.0 + it * 0.2, t = 150_000L + 4_000L + it * 100L) }
+        val view = TorqueAngleWindow.view(before + after, maxDrawPointsPerSegment = 200)
+        val segment = view.segments.single()
+        assertEquals(1, segment.gapStarts.size)
+        val gap = segment.gapStarts.single()
+        assertEquals(150.0, segment.points[gap].angle, 1e-9)
+        assertTrue(segment.points[gap].receivedAtMillis - segment.points[gap - 1].receivedAtMillis > TorqueAngleWindow.DASH_GAP_MILLIS)
+        // 只有一处间断：抽样后相邻点即使隔了好几百毫秒也不算间断。
+        val continuous = TorqueAngleWindow.view(List(3_000) { point(it * 0.1, it * 0.2, t = it * 900L) }, maxDrawPointsPerSegment = 100)
+        assertTrue(continuous.segments.single().gapStarts.isEmpty())
+    }
+
+    @Test fun currentRunCarriesLoadingAnalysisWithCandidate() {
+        val run = List(400) { i ->
+            val exact = i / 5.0
+            point(Math.floor(exact), if (exact < 40) 8 * exact else 320 + 2 * (exact - 40), t = i * 100L)
+        }
+        val analysis = TorqueAngleWindow.view(run).analysis!!
+        assertEquals(40.0, analysis.candidate!!.angleDeg, 2.0)
+        assertTrue(analysis.slopes.isNotEmpty())
+    }
 }

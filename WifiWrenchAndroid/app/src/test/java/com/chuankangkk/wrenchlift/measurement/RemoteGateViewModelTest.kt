@@ -96,7 +96,8 @@ class RemoteGateViewModelTest {
             assertTrue("0x11 必须先于 0x01", codes.indexOf(WrenchPacket.FUNC_REMOTE_CONTROL) < codes.indexOf(WrenchPacket.FUNC_STOP_RUN))
             assertEquals(0x01, wrench.frames(WrenchPacket.FUNC_REMOTE_CONTROL).single().payload.single().toInt())
             assertEquals(0x01, wrench.frames(WrenchPacket.FUNC_STOP_RUN).single().payload.single().toInt())
-            assertEquals(MotionCommand.FORWARD, vm.state.value.motion)
+            // 扳手先收到帧、send 返回后 VM 才更新状态：等待而非立即断言（避免竞态）。
+            awaitCondition(message = "状态为正转") { vm.state.value.motion == MotionCommand.FORWARD }
 
             // 运行结束结果帧：App 自动回 0x17，运动状态回到已停止。
             wrench.send(TestPacketFactory.resultFrame(0x00, "0000000000", 1, 182, 88))
@@ -155,9 +156,17 @@ class RemoteGateViewModelTest {
             org.apache.poi.xssf.usermodel.XSSFWorkbook(java.io.ByteArrayInputStream(bytes)).use { book ->
                 val data = book.getSheet("过程数据")
                 assertEquals(75, data.lastRowNum)
-                assertEquals(0.0, data.getRow(1).getCell(5).numericCellValue, 0.0)
-                assertEquals(24 * 7.0, data.getRow(25).getCell(5).numericCellValue, 0.0)
-                assertEquals(24.0, data.getRow(75).getCell(6).numericCellValue, 0.0)
+                val header = data.getRow(0)
+                fun col(name: String) = (0 until header.lastCellNum).first { header.getCell(it).stringCellValue == name }
+                assertEquals(0.0, data.getRow(1).getCell(col("扭矩 N·m")).numericCellValue, 0.0)
+                assertEquals(24 * 7.0, data.getRow(25).getCell(col("扭矩 N·m")).numericCellValue, 0.0)
+                assertEquals(24.0, data.getRow(75).getCell(col("转角 °")).numericCellValue, 0.0)
+                // 同一帧 25 个点共用接收时间：帧内序号 1..25，帧内点数 25。
+                assertEquals(25.0, data.getRow(25).getCell(col("帧内序号")).numericCellValue, 0.0)
+                assertEquals(25.0, data.getRow(25).getCell(col("帧内点数")).numericCellValue, 0.0)
+                // 三帧字节完全相同也按帧内点数分开。
+                assertEquals(1.0, data.getRow(26).getCell(col("帧内序号")).numericCellValue, 0.0)
+                assertEquals(3.0, data.getRow(75).getCell(col("帧号")).numericCellValue, 0.0)
                 assertTrue(book.getSheet("图表").createDrawingPatriarch().charts.size >= 4)
             }
             vm.endSession()
@@ -211,6 +220,57 @@ class RemoteGateViewModelTest {
             // 显示窗口不再死锁最近 50 点。
             assertEquals(120, vm.state.value.recentPoints.size)
             assertEquals(119.0, vm.state.value.currentTorqueNm, 0.0)
+            vm.endSession()
+            awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE }
+        }
+    }
+    /** 协议：扳手发 0x15 后 0.5 秒内收不到 0x17 会把结果另存。App 先确认再入库；结果点不并进实时过程曲线。 */
+    @Test fun resultFrameIsAckedRightAwayAndStaysOffTheLiveCurve() {
+        ScriptedWrenchServer().use { wrench ->
+            val vm = viewModelFor(wrench)
+            vm.connectTcp()
+            awaitCondition(message = "握手成功") { vm.state.value.linkPhase == LinkPhase.READY }
+            val payload = ByteArray(12 + 4 * 30)
+            for (i in 0 until 30) {
+                payload[13 + i * 4] = (i * 5).toByte()
+                payload[15 + i * 4] = i.toByte()
+            }
+            wrench.send(WrenchPacketBuilder.build(WrenchPacket.FUNC_TORQUE_ANGLE, payload))
+            awaitCondition(message = "30 点入库") { vm.state.value.persistedPointCount == 30L }
+            val sentAt = System.nanoTime()
+            wrench.send(TestPacketFactory.resultFrame(0x00, "0000000000", 1, 182, 88))
+            awaitCondition(timeoutMillis = 2_000, message = "自动 0x17") { wrench.frames(WrenchPacket.FUNC_RESULT_CONFIRM).isNotEmpty() }
+            val ackMillis = (System.nanoTime() - sentAt) / 1_000_000
+            assertTrue("0x17 用时 $ackMillis ms（协议要求 0.5 s 内；本机余量放宽到 1 s）", ackMillis < 1_000)
+            awaitCondition(message = "结果入库") { vm.state.value.persistedPointCount == 31L }
+            assertEquals("结果帧不并进实时曲线", 30, vm.state.value.recentPoints.size)
+            assertEquals(182.0, vm.state.value.currentTorqueNm, 0.0)
+            assertEquals("合格", vm.state.value.resultStatus)
+            vm.endSession()
+            awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE }
+        }
+    }
+
+    /** 0x06 不带被应答的功能码：只有紧跟在操作后的 NAK 才算「扳手没有接受」，过后到来的 NAK 不改远程状态。 */
+    @Test fun nakIsOnlyAttributedToARecentCommand() {
+        ScriptedWrenchServer().use { wrench ->
+            val vm = viewModelFor(wrench)
+            vm.connectTcp()
+            awaitCondition(message = "握手成功") { vm.state.value.linkPhase == LinkPhase.READY }
+            vm.enableRemoteControl()
+            awaitCondition(message = "远程已启用") { vm.state.value.remoteEnabled }
+            wrench.send(WrenchPacketBuilder.build(WrenchPacket.FUNC_ACK, byteArrayOf(0x01)))
+            awaitCondition(message = "NAK 关回远程") { !vm.state.value.remoteEnabled }
+            assertEquals("扳手没有接受：开启远程", vm.state.value.controlMessage)
+
+            vm.enableRemoteControl()
+            awaitCondition(message = "远程再次启用") { vm.state.value.remoteEnabled }
+            Thread.sleep(MeasurementViewModel.NAK_ATTRIBUTION_MILLIS + 300)
+            val framesBefore = vm.state.value.receivedFrameCount
+            wrench.send(WrenchPacketBuilder.build(WrenchPacket.FUNC_ACK, byteArrayOf(0x01)))
+            awaitCondition(message = "收到迟到的 NAK") { vm.state.value.receivedFrameCount > framesBefore }
+            Thread.sleep(100)
+            assertTrue("迟到的 NAK 不应关掉远程", vm.state.value.remoteEnabled)
             vm.endSession()
             awaitCondition(message = "会话结束") { vm.state.value.linkPhase == LinkPhase.IDLE }
         }

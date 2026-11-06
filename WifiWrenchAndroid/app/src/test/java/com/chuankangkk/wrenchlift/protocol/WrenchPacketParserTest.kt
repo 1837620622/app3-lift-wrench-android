@@ -52,6 +52,27 @@ class WrenchPacketParserTest {
         assertEquals(100, BatteryDecoder.decodePercent(packet))
     }
 
+    /** 一次读到超过 4 KB（例如积压后一起到达）：先解析再限长，帧一个不丢。 */
+    @Test
+    fun largeChunkOverBufferLimitKeepsEveryFrame() {
+        val frame = HexUtils.hexToBytes(EXAMPLE_0X12)
+        val chunk = ByteArray(0).let { var all = it; repeat(150) { all += frame }; all }
+        assertTrue(chunk.size > 4096)
+        assertEquals(150, WrenchPacketParser().append(chunk).size)
+    }
+
+    /** 假帧头 + 大段垃圾被逐字节跳过，之后跨两块到达的真帧照样拼回。 */
+    @Test
+    fun garbageIsCappedButFollowingSplitFrameSurvives() {
+        val parser = WrenchPacketParser()
+        val frame = HexUtils.hexToBytes(EXAMPLE_0X12)
+        // 一个声称 255 字节的假帧头让解析器等待，后面跟 5000 字节垃圾。
+        val junk = byteArrayOf(0xC5.toByte(), 0xC5.toByte(), 0x01, 0x12, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) + ByteArray(5_000) { 0x11 }
+        assertEquals(0, parser.append(junk).size)
+        assertEquals(0, parser.append(frame.copyOfRange(0, 20)).size)
+        assertEquals(1, parser.append(frame.copyOfRange(20, frame.size)).size)
+    }
+
     companion object {
         const val EXAMPLE_0X12 =
             "C5 C5 01 12 FF FF 20 " +

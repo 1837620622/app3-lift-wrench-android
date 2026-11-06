@@ -54,6 +54,9 @@ class MeasurementRepository(
 
     suspend fun savePoint(entity: TorquePointEntity): Long = dao.insertTorquePoint(entity)
 
+    suspend fun savePoints(entities: List<TorquePointEntity>): List<Long> =
+        if (entities.isEmpty()) emptyList() else dao.insertTorquePoints(entities)
+
     suspend fun updateSessionSummary(
         sessionId: Long,
         resultStatus: String,

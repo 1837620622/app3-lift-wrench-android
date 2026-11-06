@@ -1,5 +1,6 @@
 package com.chuankangkk.wrenchlift.measurement
 
+import com.chuankangkk.wrenchlift.measurement.analysis.LoadingAnalysis
 import kotlin.math.max
 import kotlin.math.min
 
@@ -8,7 +9,11 @@ import kotlin.math.min
  *
  * 规则：
  * - 内存显示缓冲最多 [MAX_BUFFER_POINTS] 点（约十几分钟连续回传），只用于画图；
- * - 按「运行段」切分：螺栓号变化、转角突然回落（新一次运行）、或接收间隔过长时断开，段与段之间不连线；
+ * - 按「运行段」切分（[isNewRun]，与导出同一口径）：螺栓号变化、转角突然回落或回到 0 附近（新一次运行）、
+ *   或接收间隔超过 [GAP_MILLIS] 时断开，段与段之间不连线；
+ * - 段内接收间隔超过 [DASH_GAP_MILLIS]（0x12 约每秒一帧，漏了一帧以上）记为「数据间断」，画虚线连接，
+ *   与「转折候选」的标记完全不同；
+ * - 当前段另做加载分析（[LoadingAnalysis]）：转折候选与局部斜率，只作参考、未验证；
  * - 横轴按当前段转角跨度自适应；跨度超过 [MAX_VISIBLE_SPAN_DEG] 时只看最近这一段跨度；
  * - 点太多时按序号分桶保留每桶最小/最大扭矩，保住峰谷形态，不插值、不造点。
  */
@@ -19,6 +24,17 @@ object TorqueAngleWindow {
     const val MIN_SPAN_DEG = 10.0
     const val MAX_VISIBLE_SPAN_DEG = 1_080.0
     const val MAX_SEGMENTS = 2
+    const val DASH_GAP_MILLIS = 2_500L
+    /** 转角从 ≥ [RESTART_FROM_DEG] 一步回到 ≤ [RESTART_AT_DEG]：扳手新一次运行从 0 起算。 */
+    const val RESTART_AT_DEG = 1.0
+    const val RESTART_FROM_DEG = 5.0
+
+    /** 运行段边界（实时图、导出图表、导出「运行段」同一口径）。 */
+    fun isNewRun(prevBolt: Int, prevAngle: Double, prevMillis: Long, bolt: Int, angle: Double, millis: Long): Boolean =
+        bolt != prevBolt ||
+            angle < prevAngle - RESET_DROP_DEG ||
+            (angle <= RESTART_AT_DEG && prevAngle >= RESTART_FROM_DEG) ||
+            millis - prevMillis > GAP_MILLIS
 
     fun append(buffer: List<MeasuredPoint>, added: List<MeasuredPoint>): List<MeasuredPoint> {
         if (added.isEmpty()) return buffer
@@ -33,9 +49,10 @@ object TorqueAngleWindow {
         for (index in 1 until points.size) {
             val previous = points[index - 1]
             val point = points[index]
-            val newRun = point.boltNo != previous.boltNo ||
-                point.sourcePoint.angleDeg < previous.sourcePoint.angleDeg - RESET_DROP_DEG ||
-                point.sourcePoint.timestampMillis - previous.sourcePoint.timestampMillis > GAP_MILLIS
+            val newRun = isNewRun(
+                previous.boltNo, previous.sourcePoint.angleDeg, previous.sourcePoint.timestampMillis,
+                point.boltNo, point.sourcePoint.angleDeg, point.sourcePoint.timestampMillis,
+            )
             if (newRun) {
                 result += current
                 current = mutableListOf()
@@ -72,11 +89,14 @@ object TorqueAngleWindow {
             val inRange = segment.withIndex()
                 .filter { it.value.sourcePoint.angleDeg >= clippedMin }
                 .map { it.value.toChartPoint(firstSeq + start + it.index) }
-            if (inRange.isEmpty()) null else ChartSegment(
-                points = decimate(inRange, maxDrawPointsPerSegment),
-                isCurrent = index == kept.lastIndex,
-                sourceCount = inRange.size,
-            )
+            if (inRange.isEmpty()) null else withGaps(inRange, maxDrawPointsPerSegment).let { (drawnPoints, gaps) ->
+                ChartSegment(
+                    points = drawnPoints,
+                    isCurrent = index == kept.lastIndex,
+                    sourceCount = inRange.size,
+                    gapStarts = gaps,
+                )
+            }
         }
         val visible = drawn.flatMap { it.points }
         var minAngle = visible.minOfOrNull { it.angle } ?: latest.angle
@@ -104,7 +124,36 @@ object TorqueAngleWindow {
             currentPeak = latestSegment.withIndex().maxBy { it.value.sourcePoint.torqueNm }
                 .let { it.value.toChartPoint(firstSeq + latestStart + it.index) },
             currentPointCount = latestSegment.size,
+            analysis = LoadingAnalysis.analyze(
+                DoubleArray(latestSegment.size) { latestSegment[it].sourcePoint.angleDeg },
+                DoubleArray(latestSegment.size) { latestSegment[it].sourcePoint.torqueNm },
+            ),
         )
+    }
+
+    /**
+     * 段内按接收间隔切成连续片，各片分别抽样后拼接；返回拼接后每个「间断后首点」的下标。
+     * 先切再抽样：抽样后相邻两点的时间差不能当成间断（点多时一个桶就可能跨几秒）。
+     */
+    internal fun withGaps(points: List<ChartPoint>, maxPoints: Int): Pair<List<ChartPoint>, List<Int>> {
+        val pieces = ArrayList<List<ChartPoint>>()
+        var start = 0
+        for (i in 1 until points.size) {
+            if (points[i].receivedAtMillis - points[i - 1].receivedAtMillis > DASH_GAP_MILLIS) {
+                pieces += points.subList(start, i)
+                start = i
+            }
+        }
+        pieces += points.subList(start, points.size)
+        if (pieces.size == 1) return decimate(points, maxPoints) to emptyList()
+        val out = ArrayList<ChartPoint>(min(points.size, maxPoints + pieces.size * 2))
+        val gaps = ArrayList<Int>(pieces.size - 1)
+        pieces.forEachIndexed { index, piece ->
+            if (index > 0) gaps += out.size
+            val budget = max(4, (maxPoints.toLong() * piece.size / points.size).toInt())
+            out += decimate(piece, budget)
+        }
+        return out to gaps
     }
 
     /** 按序号分桶，每桶保留最小与最大扭矩点（保持原顺序）；末点始终保留。 */
@@ -144,10 +193,12 @@ object TorqueAngleWindow {
 /** @property seq 记录内序号（从 1 起），与导出「序号」列一致。 */
 data class ChartPoint(val angle: Double, val torque: Double, val receivedAtMillis: Long, val seq: Long = 0)
 
+/** @property gapStarts [points] 里「数据间断后首点」的下标：与前一点之间超过 [TorqueAngleWindow.DASH_GAP_MILLIS] 没收到数据。 */
 data class ChartSegment(
     val points: List<ChartPoint>,
     val isCurrent: Boolean,
     val sourceCount: Int,
+    val gapStarts: List<Int> = emptyList(),
 )
 
 data class TorqueAngleView(
@@ -164,6 +215,8 @@ data class TorqueAngleView(
     /** 当前运行段（未抽样）的峰值扭矩点。 */
     val currentPeak: ChartPoint? = null,
     val currentPointCount: Int = 0,
+    /** 当前运行段的加载分析（转折候选 + 局部斜率），只作参考、未验证。 */
+    val analysis: LoadingAnalysis.Result? = null,
 ) {
     val isEmpty: Boolean get() = latest == null
 

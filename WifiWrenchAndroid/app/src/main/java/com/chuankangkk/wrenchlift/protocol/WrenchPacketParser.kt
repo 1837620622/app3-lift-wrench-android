@@ -6,9 +6,6 @@ class WrenchPacketParser {
     fun append(chunk: ByteArray): List<WrenchPacket> {
         if (chunk.isEmpty()) return emptyList()
         buffer += chunk
-        if (buffer.size > MAX_BUFFER_SIZE) {
-            buffer = buffer.takeLast(WrenchPacket.MIN_FRAME_SIZE - 1).toByteArray()
-        }
 
         val packets = mutableListOf<WrenchPacket>()
         var index = 0
@@ -40,6 +37,11 @@ class WrenchPacketParser {
         }
 
         buffer = buffer.copyOfRange(index, buffer.size)
+        // 先解析再限长：大块数据一次到达时不会在解析前被截掉；只有长期无法成帧的垃圾才会被丢弃，
+        // 且保留一帧最大长度减 1 字节，跨块的半帧不受影响。
+        if (buffer.size > MAX_BUFFER_SIZE) {
+            buffer = buffer.copyOfRange(buffer.size - (MAX_FRAME_SIZE - 1), buffer.size)
+        }
         return packets
     }
 
@@ -56,5 +58,7 @@ class WrenchPacketParser {
 
     companion object {
         private const val MAX_BUFFER_SIZE = 4096
+        /** 数据长度字段 1 字节：一帧最多 8 + 255 字节。 */
+        const val MAX_FRAME_SIZE = WrenchPacket.MIN_FRAME_SIZE + 0xFF
     }
 }

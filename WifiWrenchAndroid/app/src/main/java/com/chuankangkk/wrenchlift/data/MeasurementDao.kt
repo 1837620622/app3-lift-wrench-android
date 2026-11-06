@@ -13,6 +13,10 @@ interface MeasurementDao {
     @Insert
     suspend fun insertTorquePoint(entity: TorquePointEntity): Long
 
+    /** 一帧 0x12 的多个点在一个事务里按顺序写入（id 递增即接收顺序）。 */
+    @Insert
+    suspend fun insertTorquePoints(entities: List<TorquePointEntity>): List<Long>
+
     @Query(
         """
         UPDATE measurement_sessions
