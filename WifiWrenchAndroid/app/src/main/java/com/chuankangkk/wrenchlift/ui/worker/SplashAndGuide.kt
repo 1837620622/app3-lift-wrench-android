@@ -46,14 +46,14 @@ import com.chuankangkk.wrenchlift.measurement.MeasurementState
 import com.chuankangkk.wrenchlift.measurement.WorkerText
 
 /**
- * 启动页（§5.5）：定稿 `06-splash.jpg` 全屏场景图（标题/署名已在图内）。无端口、无按钮、无叠字。
+ * 启动页（§5.5）：定稿全屏场景图（示意 `docs/design-renders/03-splash.png`；运行时 `wifi_wrench_splash_scene.jpg`，标题/署名已在图内）。无端口、无按钮、无叠字。
  */
 @Composable
 fun SplashScreen(modifier: Modifier = Modifier, animate: Boolean = true) {
     val fade = remember { Animatable(if (animate) 0f else 1f) }
     LaunchedEffect(Unit) { if (animate) fade.animateTo(1f, tween(420)) }
     BoxWithConstraints(modifier.fillMaxSize().background(SplashColors.background).testTag("splash")) {
-        // 启动页直接使用产品方定稿 docs/design-renders/06-splash.jpg（标题/署名已烘焙在图内，不再叠字）。
+        // 启动页直接使用产品方定稿场景（docs/design-renders/03-splash.png 示意；标题/署名已烘焙在图内，不再叠字）。
         Image(
             painter = painterResource(R.drawable.wifi_wrench_splash_scene),
             contentDescription = "WiFi 扳手 · 隔振器顶升调频采集 · 传康Kk 免费供应",

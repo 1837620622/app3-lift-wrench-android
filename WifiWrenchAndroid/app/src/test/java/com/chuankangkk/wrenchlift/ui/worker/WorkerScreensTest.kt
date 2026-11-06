@@ -157,7 +157,7 @@ class WorkerScreensTest {
 
     @Test fun splashShowsExactlyTheThreeChineseLines() {
         compose.setContent { WrenchWorkerTheme(dark = false) { SplashScreen(animate = false) } }
-        // 定稿 06-splash 文案已烘焙在位图内；无叠字 Text，无障碍走 contentDescription。
+        // 定稿启动页（docs/design-renders/03-splash.png）文案已烘焙在位图内；无叠字 Text，无障碍走 contentDescription。
         compose.onNodeWithContentDescription("WiFi 扳手 · 隔振器顶升调频采集 · 传康Kk 免费供应").assertIsDisplayed()
         compose.onNodeWithTag("splash").assertIsDisplayed()
         assertEquals(0, compose.onAllNodesWithText("WiFi 扳手", substring = false).fetchSemanticsNodes().size)

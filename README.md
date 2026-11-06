@@ -32,9 +32,9 @@
 - 单横屏工作台：顶栏状态 + 返回；左扭矩/转角；中扭矩–转角曲线（按转角跨度自适应）；右远程、正转、反转、停止、参数、导出。
 - 远程门闩：未开 0x11 不能正/反转，正/反转二次确认，停止始终可点，结束会话 ≠ 停止扳手。
 - 参数侧滑（0x10，确认后写入）；导出 `.xlsx` 含 Excel 原生图表（全量不截断），CSV 在设置里可选。
-- App 图标素材与 `docs/design-renders/00-app-icon.jpg` **基本一致**（同构图，分辨率不同）。
-- 启动页：直接使用 `06-splash.jpg` 定稿位图（`wifi_wrench_splash_scene.jpg`），文案已在图内、代码不再叠字 → **一致**。连接引导与主台背景改用 06 的 T 手把场景裁切，已无套筒扳手图。
-- 主台观感按 `01-workbench-hero.jpg` 对齐深色工业分区（左读数 / 中曲线 / 右控制）；仓库里尚无同构图真机截图，仅有概念渲染与合成自检。
+- App 图标素材与 `res/.../ic_launcher_foreground.png`（T 手把 + Wi‑Fi）一致；示意见 `docs/reference-hardware/`。
+- 启动页：直接使用定稿场景位图（`wifi_wrench_splash_scene.jpg`，示意 `docs/design-renders/03-splash.png`），文案已在图内、代码不再叠字 → **一致**。连接引导用 T 手把产品图，已无套筒扳手图。
+- 主台示意见 `docs/design-renders/01-workbench.png`（深色工业分区：左读数 / 中扭矩–转角 / 右远程控制，无端口/无板号）；交互以设计规范为准，尚非真机截图。
 - 协议补充：0x05 错误码提示；0x50/0x51 脉冲扳手参数（设置里选扳手类型后开放，默认 0x10）。
 
 **2026-11-06 第三轮（单台扳手 / 去废话 / 排版与导出自检）**：代码已写、本机编译与单测通过、截图自检；尚未用户视觉验收、尚未真机控制验证。
@@ -62,25 +62,29 @@
 
 找平衡点的思路（候选，待验证）：在每段**有效加载**（去空行程、去卸载）的扭矩–转角曲线上找**斜率突变**的位置——原支承接触面分离时，力的传递路径变了，曲线斜率随之变化。用两段直线与单直线比残差，改善明显、前后斜率差别够大才给候选；否则写「未识别」及原因。阈值要用真实数据 + 独立力值/间隙参考试验来定，导出里的「拟合明细」「候选扫描」就是为此准备的。
 
-## 视觉示意（设计渲染）
+## 视觉示意（软件界面图）
 
-交互/连接/验收仍以 [docs/设计规范.md](docs/设计规范.md) 为准。下列为 `docs/design-renders/` 示意，便于对照 App 素材是否一致。
+交互/连接/验收仍以 [docs/设计规范.md](docs/设计规范.md) 为准。下列为 `docs/design-renders/` 按规范色板与真代码文案渲的工人界面软件图（非真机截图）。
 
-| 示意 | 与当前 App 素材 |
+| 示意 | 说明 |
 | --- | --- |
-| 图标 `00-app-icon.jpg` | **一致** → `res/.../ic_launcher_foreground.png` |
-| 启动页 `06-splash.jpg` | **一致** → `res/drawable-nodpi/wifi_wrench_splash_scene.jpg`（原图直出，不叠字） |
-| 主台 `01-workbench-hero.jpg` | **分区方向一致**（概念渲染，非实机截图） |
-| 宣传短片 `04-promo.mp4` | 氛围片，非功能演示 |
+| 主台 `01-workbench.png` | 顶栏状态 + 左读数 + 中扭矩–转角 + 右远程控制（无端口/无板号） |
+| 连接引导 `02-connect-guide.png` | 左 T 手把，右两步连 Wi‑Fi（无端口栏） |
+| 启动页 `03-splash.png` | 定稿场景示意 → 运行时 `res/drawable-nodpi/wifi_wrench_splash_scene.jpg` |
+| 参数侧滑 `04-params-sheet.png` | 目标扭矩等字段 + 保存写入 |
 
 <p align="center">
-  <img src="docs/design-renders/00-app-icon.jpg" alt="App 图标渲染" width="220" />
-  &nbsp;
-  <img src="docs/design-renders/06-splash.jpg" alt="启动页渲染" width="420" />
+  <img src="docs/design-renders/03-splash.png" alt="启动页软件图" width="480" />
 </p>
 
 <p align="center">
-  <img src="docs/design-renders/01-workbench-hero.jpg" alt="横屏主台渲染" width="720" />
+  <img src="docs/design-renders/01-workbench.png" alt="横屏主台软件图" width="720" />
+</p>
+
+<p align="center">
+  <img src="docs/design-renders/02-connect-guide.png" alt="连接引导软件图" width="720" />
+  &nbsp;
+  <img src="docs/design-renders/04-params-sheet.png" alt="参数侧滑软件图" width="720" />
 </p>
 
 真机外形参照：[docs/reference-hardware/t-handle-on-isolator.png](docs/reference-hardware/t-handle-on-isolator.png)
@@ -100,7 +104,7 @@
 - `docs/项目背景.md`：**背景第一页（二次开发从这进）**。
 - `docs/设计规范.md`：**UI 交接权威**（单屏分区、连接、视觉、协议映射、验收清单）。
 - `docs/验收对照.md`：实现方按验收清单逐项自检（证据与未验证项分开写）。
-- `docs/design-renders/`：产品方设计稿落位目录（可空）；**非**规范正文；**禁止**塞 AI 软件概念图当定稿。
+- `docs/design-renders/`：按设计规范/真代码文案渲的工人界面软件图；**非**规范正文；交互仍以设计规范为准。
 - `docs/reference-hardware/`：T 形手把真机参照（非 UI 稿）。
 - `docs/开发接手说明.md`：模块、禁忌、无硬件测试。
 - `docs/界面与导出优化方向.md`：锁定决策 + 功能码表 + 阶段。
