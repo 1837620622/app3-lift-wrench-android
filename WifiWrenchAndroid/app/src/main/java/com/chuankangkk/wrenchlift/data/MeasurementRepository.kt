@@ -123,4 +123,9 @@ class MeasurementRepository(
     suspend fun lastPointId(id: Long) = dao.lastPointId(id)
     suspend fun pointsPage(id: Long, afterId: Long, throughId: Long) = dao.pointsPage(id, afterId, throughId)
     suspend fun countPointsThrough(id: Long, throughId: Long) = dao.countPointsThrough(id, throughId)
+    suspend fun saveFrameEvents(entities: List<FrameEventEntity>) {
+        if (entities.isNotEmpty()) dao.insertFrameEvents(entities)
+    }
+    suspend fun lastFrameEventId(id: Long) = dao.lastFrameEventId(id)
+    suspend fun frameEventsPage(id: Long, afterId: Long, throughId: Long) = dao.frameEventsPage(id, afterId, throughId)
 }

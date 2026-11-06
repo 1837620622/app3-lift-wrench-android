@@ -20,7 +20,38 @@ data class ResultFrame(
     val angleUpperDeg: Double?,
     val angleLowerDeg: Double?,
     val rawHex: String,
-)
+) {
+    /**
+     * 协议 0x15：M1（0x01）与 M2（0x02）下同一位置的字段含义不同——
+     * 28-29 M1 目标扭矩值 / M2 预设扭矩实际值；30-31 M1 目标扭矩实际值 / M2 最终扭矩实际值；
+     * 32-33 M1 固定 0 / M2 目标角度设置值；34-35 M1 角度实际值 / M2 目标角度实际值；
+     * 36-39 M1 目标扭矩上/下限 / M2 最终扭矩上/下限；40-43 M1 角度上/下限 / M2 目标角度上/下限。
+     */
+    val isM2: Boolean get() = mode == MODE_M2
+
+    /** 结果帧里能读到的扭矩**设定值**：只有 M1 的 28-29 是目标扭矩；M2 的 28-29 是实测值，不能当设定。 */
+    val settingTorqueNm: Double? get() = if (isM2) null else targetTorqueNm
+
+    val modeText: String get() = modeLabel(mode)
+    val torqueField1Name: String get() = if (isM2) "预设扭矩实际值" else "目标扭矩"
+    val torqueField2Name: String get() = if (isM2) "最终扭矩实际值" else "目标扭矩实际值"
+    val angleField1Name: String get() = if (isM2) "目标角度设置值" else "目标角度（M1 为 0）"
+    val angleField2Name: String get() = if (isM2) "目标角度实际值" else "角度实际值"
+    val torqueLimitName: String get() = if (isM2) "最终扭矩" else "目标扭矩"
+    val angleLimitName: String get() = if (isM2) "目标角度" else "角度"
+
+    companion object {
+        const val MODE_M1 = 0x01
+        const val MODE_M2 = 0x02
+
+        fun modeLabel(mode: Int?): String = when (mode) {
+            MODE_M1 -> "M1 扭矩模式"
+            MODE_M2 -> "M2 扭矩+角度模式"
+            null -> "模式未知"
+            else -> "模式 0x%02X（协议未定义）".format(mode)
+        }
+    }
+}
 
 enum class ResultKind {
     OK,

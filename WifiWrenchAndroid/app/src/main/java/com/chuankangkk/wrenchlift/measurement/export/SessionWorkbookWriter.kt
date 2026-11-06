@@ -1,11 +1,22 @@
 package com.chuankangkk.wrenchlift.measurement.export
 
+import com.chuankangkk.wrenchlift.measurement.MeasurementCsvExporter
 import com.chuankangkk.wrenchlift.measurement.TorqueAngleWindow
 import com.chuankangkk.wrenchlift.measurement.analysis.LoadingAnalysis
+import com.chuankangkk.wrenchlift.measurement.analysis.WorkingCondition
+import com.chuankangkk.wrenchlift.protocol.HexUtils
+import com.chuankangkk.wrenchlift.protocol.PulseResultFrameDecoder
+import com.chuankangkk.wrenchlift.protocol.ResultFrame
+import com.chuankangkk.wrenchlift.protocol.ResultFrameDecoder
+import com.chuankangkk.wrenchlift.protocol.ResultKind
+import com.chuankangkk.wrenchlift.protocol.WrenchPacket
+import com.chuankangkk.wrenchlift.protocol.WrenchPacketParser
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.io.Writer
 import java.text.SimpleDateFormat
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -39,7 +50,12 @@ data class ProcessRow(
         }
 }
 
-/** 单台扳手的一条记录：不含板号/测点等现场台账字段。 */
+/**
+ * 单台扳手的一条记录：不含板号/测点等现场台账字段。
+ *
+ * 结果帧字段按协议原位保存：0x15 的 28-29 / 32-33 在 M1、M2 下含义不同（M1 目标扭矩 / 目标角度 0；
+ * M2 预设扭矩实际值 / 目标角度设置值），导出时按 [resultRawHex] 解出功能码与模式再给字段名。
+ */
 data class WorkbookSummary(
     val recordId: Long,
     val deviceSn: String,
@@ -56,22 +72,37 @@ data class WorkbookSummary(
     val angleUpperDeg: Double?,
     val appVersion: String,
     val exportedAtMillis: Long = System.currentTimeMillis(),
+    /** 最后一个结果帧（0x15 / 0x55）的原始 HEX；旧记录可能没有。 */
+    val resultRawHex: String? = null,
+)
+
+/** 一条通信记录（收 / 发的非 0x12 帧与关键操作），来自数据库。 */
+data class FrameEventRow(
+    val index: Long,
+    val atMillis: Long,
+    /** 「收」或「发」。 */
+    val direction: String,
+    val functionCode: Int?,
+    val summary: String,
+    val rawHex: String,
 )
 
 data class WorkbookStats(val processRows: Long, val chartRows: Int, val chartCount: Int)
 
 /**
  * 生成真 `.xlsx`（Office Open XML）：
- * - 「过程数据」全量写入，不截断；
+ * - 「过程数据」全量写入，不截断；另带派生列：运行段、帧号、帧内序号、段内时间/转角、相对有效加载起点转角、
+ *   帧间转速、接收间隔、工况、事件；
+ * - 「运行段」逐段列出点数、转角范围、转速、峰值、单直线斜率、最佳两段位置、转折候选（未验证）或未识别原因、工况摘要；
+ * - 「工况分段」「工况事件」：每段的空程 / 加载 / 停转保压 / 卸载 / 回退 / 空转等阶段与疑似打滑、间断、回退事件；
+ * - 「结果帧」：每个 0x15 / 0x55 按协议逐字段解出（M1 / M2 字段名分开写），并对照所属运行段的 0x12 峰值；
+ * - 「拟合明细」「候选扫描」给出转折候选算法的中间量，便于复核和调阈值；
+ * - 「通信记录」：收发的非 0x12 帧（应答、状态、对时、电量、结果、控制指令等）；
  * - 「图表数据」按序号分桶保留每桶最大/最小扭矩，段与段之间留空行（图上断开，不跨段连线）；
- *   另有各运行段的局部斜率与转折候选点；
- * - 「运行段」逐段列出点数、转角范围、转速、峰值、单直线斜率、最佳两段位置、转折候选（未验证）或未识别原因；
- * - 「拟合明细」「候选扫描」给出算法中间量（分箱数据、两段拟合值、每个候选位置的残差改善），便于复核和调阈值；
- * - 「过程数据」另带派生列：运行段、帧号、帧内序号、段内时间/转角、帧间转速、接收间隔；
- * - 「图表」页内嵌 Excel 原生图表：扭矩–转角（叠加转折候选）、斜率–转角、各段叠加（对齐有效加载起点）、
- *   残差改善–候选位置、扭矩/转角/转速/接收间隔–接收时间，若有结果帧再加目标 vs 实际。
- *   图表、统计、候选只用 0x12 过程帧。
- * 流式写 ZIP，不在内存里拼整份文件。
+ * - 「图表」页内嵌 Excel 原生图表：扭矩–转角（叠加转折候选）、斜率–转角、扭矩–转角与扭矩–时间（按工况着色）、
+ *   各段叠加、残差改善–候选位置、转角/转速/接收间隔–接收时间，若有结果帧再加结果扭矩对照。
+ *   图表、统计、候选、工况只用 0x12 过程帧。
+ * 流式写 ZIP，不在内存里拼整份文件；过程点读两遍（第一遍分段分析，第二遍逐行写出带工况的过程数据）。
  */
 object SessionWorkbookWriter {
     const val MAX_CHART_ROWS = 6_000
@@ -84,6 +115,10 @@ object SessionWorkbookWriter {
     const val SHEET_RUNS = "运行段"
     const val SHEET_FIT = "拟合明细"
     const val SHEET_SCAN = "候选扫描"
+    const val SHEET_PHASES = "工况分段"
+    const val SHEET_EVENTS = "工况事件"
+    const val SHEET_RESULTS = "结果帧"
+    const val SHEET_COMM = "通信记录"
     /** 单段超过这么多点不做候选分析（内存与耗时上限）；数据照常全量导出。 */
     const val MAX_ANALYSIS_POINTS = 200_000
     /** 「拟合明细」「候选扫描」各自最多写这么多行；超出的运行段只在「运行段」页给汇总。 */
@@ -93,7 +128,9 @@ object SessionWorkbookWriter {
     /** 帧级时间序列（转速、接收间隔）图表点上限。 */
     const val MAX_FRAME_ROWS = 3_000
     /** 有过程点时固定的图表数（无数据的图写明「未计算」，不省略，部件数固定）。 */
-    const val PROCESS_CHART_COUNT = 8
+    const val PROCESS_CHART_COUNT = 10
+    /** 「结果帧」「工况事件」「通信记录」各自最多写这么多行。 */
+    const val MAX_LIST_ROWS = 100_000
 
     private const val COLOR_TORQUE = "0D9B8A"
     private const val COLOR_ANGLE = "3A6EA5"
@@ -103,26 +140,43 @@ object SessionWorkbookWriter {
     private const val COLOR_THRESHOLD = "C23B4F"
     /** 叠加图各段颜色（不含候选紫色，避免混淆）。 */
     private val RUN_COLORS = listOf("0D9B8A", "3A6EA5", "D9822B", "C23B4F", "5B8C2A", "6B5FB5", "8A6D3B", "2F6F8F")
+    /** 工况着色（与 [WorkingCondition.Phase] 顺序一致；异常工况用红 / 棕）。 */
+    private val PHASE_COLORS = mapOf(
+        WorkingCondition.Phase.IDLE to "B8C0C8",
+        WorkingCondition.Phase.FREE_TRAVEL to "8A96A3",
+        WorkingCondition.Phase.LOADING to "0D9B8A",
+        WorkingCondition.Phase.STALL to "D9822B",
+        WorkingCondition.Phase.UNLOADING to "3A6EA5",
+        WorkingCondition.Phase.TORQUE_DROP to "C23B4F",
+        WorkingCondition.Phase.FREE_SPIN to "8A6D3B",
+        WorkingCondition.Phase.BACKOFF to "5B8C2A",
+        WorkingCondition.Phase.NO_LOAD to "2F6F8F",
+    )
+    private val PHASES = WorkingCondition.Phase.entries
+    /** 「图表数据」里工况着色列的起始列（AB）。 */
+    private const val PHASE_COL = 27
 
     private val dataHeaders = listOf(
         "序号", "接收时间（手机）", "接收时间戳(ms)", "相对首点(s)", "距上一点(ms)",
         "运行段", "段内时间(s)", "帧号", "帧内序号", "帧内点数",
-        "螺栓号", "扭矩 N·m", "转角 °", "段内转角增量 °", "帧间转速 °/s", "原始转角值", "帧类型", "原始HEX",
+        "螺栓号", "扭矩 N·m", "转角 °", "段内转角增量 °", "相对有效加载起点 °", "帧间转速 °/s", "工况", "事件",
+        "原始转角值", "帧类型", "原始HEX",
     )
-    private val dataWidths = listOf(8.0, 24.0, 16.0, 11.0, 11.0, 7.0, 11.0, 8.0, 8.0, 8.0, 7.0, 10.0, 9.0, 12.0, 12.0, 10.0, 12.0, 60.0)
+    private val dataWidths = listOf(8.0, 24.0, 16.0, 11.0, 11.0, 7.0, 11.0, 8.0, 8.0, 8.0, 7.0, 10.0, 9.0, 12.0, 14.0, 12.0, 10.0, 22.0, 10.0, 12.0, 60.0)
     private val chartHeaders = listOf(
         "序号", "转角 °", "扭矩 N·m", "相对首点(s)", "",
         "斜率 转角 °", "斜率 N·m/°", "", "候选 转角 °", "候选 扭矩 N·m", "候选 运行段", "",
         "帧 相对首点(s)", "帧间转速 °/s", "帧接收间隔 ms", "",
         "叠加 运行段", "叠加 相对有效加载起点 °", "叠加 分箱平均扭矩 N·m", "",
         "扫描 运行段", "扫描 相对有效加载起点 °", "扫描 残差改善 %", "",
-        "阈值 相对转角 °", "阈值 残差改善 %",
-    )
+        "阈值 相对转角 °", "阈值 残差改善 %", "",
+    ) + PHASES.map { "工况·${it.label} 扭矩 N·m" }
     private val runHeaders = listOf(
         "运行段", "首序号", "末序号", "点数", "螺栓号", "开始时间", "时长 s", "起始转角 °", "最大转角 °", "平均转速 °/s",
         "峰值扭矩 N·m", "峰值处转角 °", "有效加载起 °", "有效加载止 °", "单直线斜率 N·m/°",
         "最佳两段位置 °", "最佳残差改善 %",
         "候选转角 °", "候选扭矩 N·m", "前斜率 N·m/°", "后斜率 N·m/°", "残差改善 %", "判定",
+        "工况次序", "空程转角 °", "加载转角 °", "停转保压时长 s", "疑似打滑次数", "转角回退次数", "数据间断次数", "工况判读",
     )
     private val fitHeaders = listOf(
         "运行段", "分箱序号", "转角 °", "相对有效加载起点 °", "平均扭矩 N·m", "点数", "局部斜率 N·m/°",
@@ -131,19 +185,43 @@ object SessionWorkbookWriter {
     private val scanHeaders = listOf(
         "运行段", "候选位置 c °", "相对有效加载起点 °", "残差改善 %", "前斜率 N·m/°", "后斜率 N·m/°", "斜率变化 %", "最佳",
     )
+    private val phaseHeaders = listOf(
+        "运行段", "阶段序号", "工况", "首序号", "末序号", "点数", "开始时间", "时长 s",
+        "起始转角 °", "结束转角 °", "转角变化 °", "起始扭矩 N·m", "结束扭矩 N·m", "最大扭矩 N·m", "平均转速 °/s",
+    )
+    private val eventHeaders = listOf("运行段", "序号", "接收时间（手机）", "事件", "数值", "单位", "转角 °", "扭矩 N·m")
+    private val resultHeaders = listOf(
+        "序号", "接收时间（手机）", "所属运行段", "功能码", "状态码", "结果", "判定", "参数模式", "员工号", "螺栓号",
+        "扳手时钟", "扳手时钟−手机接收 s",
+        "扭矩字段1", "扭矩字段1 N·m", "扭矩字段2", "扭矩字段2 N·m", "角度字段1", "角度字段1 °", "角度字段2", "角度字段2 °",
+        "扭矩下限 N·m", "扭矩上限 N·m", "角度下限 °", "角度上限 °",
+        "所属段峰值扭矩(0x12) N·m", "所属段最大转角(0x12) °", "原始HEX",
+    )
+    private val commHeaders = listOf("序号", "时间（手机）", "时间戳(ms)", "相对首条(s)", "方向", "功能码", "类型", "内容", "原始HEX")
 
+    /**
+     * @param frameEvents 通信记录（可选，按时间顺序）；没有时「通信记录」页只写说明。
+     * @param rows 按序号给出全部过程点；**会被调用两次**（第一遍分段分析，第二遍逐行写出），两次必须给出同一序列。
+     */
     suspend fun write(
         output: OutputStream,
         summary: WorkbookSummary,
         totalPoints: Long,
+        frameEvents: (suspend (emit: suspend (FrameEventRow) -> Unit) -> Unit)? = null,
         rows: suspend (emit: suspend (ProcessRow) -> Unit) -> Unit,
     ): WorkbookStats {
         require(totalPoints <= EXCEL_MAX_DATA_ROWS) { "过程点超过 Excel 单表行数上限，请改用 CSV 导出" }
+        // 第一遍：只看 0x12 过程点，逐段做加载分析与工况划分；第二遍写「过程数据」时逐点带上工况与相对加载起点。
+        val runs = RunCollector()
+        rows { row -> if (row.isProcess) runs.accept(row) }
+        runs.finish()
+
         val zip = ZipOutputStream(output.buffered(64 * 1024))
         val writer = OutputStreamWriter(zip, Charsets.UTF_8)
         val hasPoints = totalPoints > 0
-        val hasTargetActual = summary.targetTorqueNm != null && summary.actualTorqueNm != null
-        val chartCount = (if (hasPoints) PROCESS_CHART_COUNT else 0) + (if (hasTargetActual) 1 else 0)
+        val lastResult = summary.resultRawHex?.let(::decodeResult)
+        val hasResultChart = summary.actualTorqueNm != null
+        val chartCount = (if (hasPoints) PROCESS_CHART_COUNT else 0) + (if (hasResultChart) 1 else 0)
 
         fun entry(name: String, body: (Writer) -> Unit) {
             zip.putNextEntry(ZipEntry(name))
@@ -158,13 +236,15 @@ object SessionWorkbookWriter {
         entry("docProps/app.xml") { it.write(appProps()) }
         entry("xl/styles.xml") { it.write(Styles.xml) }
 
-        // 过程数据：全量流式写出，同时按序号分桶抽出图表用的点、统计峰值与转角范围。
+        // 第二遍：过程数据全量流式写出，同时按序号分桶抽出图表用的点、统计峰值与转角范围、收集结果帧。
         // （ZIP 内各部件顺序无关紧要，概要页放在数据之后写，才能带上统计值。）
         val sampler = ChartSampler(totalPoints)
         val stats = ProcessStats()
-        val runs = RunCollector()
         val annotator = Annotator()
         val frames = FrameSeries(MAX_FRAME_ROWS)
+        val cursor = EventCursor(runs.runs)
+        val results = ArrayList<ResultRow>()
+        var resultsOmitted = 0
         zip.putNextEntry(ZipEntry("xl/worksheets/sheet3.xml"))
         val dataSheet = SheetWriter(writer, dataWidths, freezeHeader = true)
         dataSheet.begin()
@@ -176,20 +256,29 @@ object SessionWorkbookWriter {
             val relativeSeconds = (row.receivedAtMillis - start) / 1000.0
             annotator.accept(row)
             val process = row.isProcess
+            val run = if (process) runs.runs.getOrNull(annotator.run - 1) else null
+            val point = annotator.runPoint
+            val phase = run?.condition?.takeIf { point < it.pointCount }?.phaseAt(point)
+            val event = if (run != null) cursor.at(annotator.run, point) else null
+            val fromLoadStart = run?.result?.loadStartDeg?.let { row.angleDeg - it }
             dataSheet.row(
                 listOf(
                     num(row.index), dateTime(row.receivedAtMillis), num(row.receivedAtMillis), num(relativeSeconds), num(annotator.intervalMs),
                     num(annotator.run.takeIf { process }), num(annotator.runSeconds), num(annotator.frame), num(annotator.pointInFrame), num(annotator.framePoints),
-                    num(row.boltNo), num(row.torqueNm), num(row.angleDeg), num(annotator.runAngle), num(annotator.frameSpeed?.let(::round3)),
+                    num(row.boltNo), num(row.torqueNm), num(row.angleDeg), num(annotator.runAngle), num(fromLoadStart?.let(::round3)),
+                    num(annotator.frameSpeed?.let(::round3)), text(phase?.label), text(event),
                     num(row.angleRaw), text(row.frameLabel), text(row.rawHex),
                 ),
             )
             if (process) {
-                sampler.accept(row, relativeSeconds)
+                sampler.accept(row, relativeSeconds, phase)
                 stats.accept(row)
-                runs.accept(row)
                 if (annotator.newFrame) {
                     frames.add(relativeSeconds, annotator.frameSpeed ?: Double.NaN, annotator.frameIntervalMs?.toDouble() ?: Double.NaN)
+                }
+            } else {
+                decodeResult(row.rawHex)?.let { decoded ->
+                    if (results.size < MAX_LIST_ROWS) results += ResultRow(row, annotator.run.takeIf { it > 0 }, decoded) else resultsOmitted += 1
                 }
             }
             written += 1
@@ -198,9 +287,8 @@ object SessionWorkbookWriter {
         writer.flush()
         zip.closeEntry()
         val samples = sampler.finish()
-        runs.finish()
 
-        val summaryLayout = SummaryLayout(summary, totalPoints, stats, runs.runs)
+        val summaryLayout = SummaryLayout(summary, totalPoints, stats, runs.runs, lastResult, results.size + resultsOmitted)
         entry("xl/worksheets/sheet1.xml") { summaryLayout.write(it) }
 
         val slopes = runs.slopeRows
@@ -226,10 +314,24 @@ object SessionWorkbookWriter {
             val hi = scanRows.maxOf { it.second }
             listOf(lo to LoadingAnalysis.MIN_IMPROVEMENT * 100.0, hi to LoadingAnalysis.MIN_IMPROVEMENT * 100.0)
         }
+        // 工况着色：每个工况一列，只在该工况的抽样点上有值；工况切换处把切换点也写进前一工况列，线不断开。
+        val phaseY = PHASES.map { arrayOfNulls<Double>(samples.size) }
+        var previousSample: Sample? = null
+        samples.forEachIndexed { i, sample ->
+            if (sample == null) {
+                previousSample = null
+                return@forEachIndexed
+            }
+            sample.phase?.let { phaseY[it.ordinal][i] = sample.torque }
+            val before = previousSample?.phase
+            if (before != null && before != sample.phase) phaseY[before.ordinal][i] = sample.torque
+            previousSample = sample
+        }
         entry("xl/worksheets/sheet4.xml") { out ->
             val sheet = SheetWriter(
                 out,
-                listOf(8.0, 10.0, 11.0, 12.0, 3.0, 11.0, 11.0, 3.0, 11.0, 13.0, 11.0, 3.0, 13.0, 12.0, 13.0, 3.0, 10.0, 15.0, 15.0, 3.0, 10.0, 15.0, 13.0, 3.0, 13.0, 13.0),
+                listOf(8.0, 10.0, 11.0, 12.0, 3.0, 11.0, 11.0, 3.0, 11.0, 13.0, 11.0, 3.0, 13.0, 12.0, 13.0, 3.0, 10.0, 15.0, 15.0, 3.0, 10.0, 15.0, 13.0, 3.0, 13.0, 13.0, 3.0) +
+                    List(PHASES.size) { 14.0 },
                 freezeHeader = true,
             )
             sheet.begin()
@@ -250,8 +352,8 @@ object SessionWorkbookWriter {
                     num(frameSeries.seconds.getOrNull(frame)), num(frameSeries.speed.getOrNull(frame)?.let(::round3)), num(frameSeries.intervalMs.getOrNull(frame)), Cell.Blank,
                     num(over?.first), num(over?.second), num(over?.third), Cell.Blank,
                     num(scan?.first), num(scan?.second), num(scan?.third), Cell.Blank,
-                    num(limit?.first), num(limit?.second),
-                )
+                    num(limit?.first), num(limit?.second), Cell.Blank,
+                ) + phaseY.map { num(it.getOrNull(i)) }
                 if (cells.all { it == Cell.Blank }) sheet.blankRow() else sheet.row(cells)
             }
             sheet.end()
@@ -260,6 +362,13 @@ object SessionWorkbookWriter {
         entry("xl/worksheets/sheet5.xml") { out -> writeRuns(out, runs.runs) }
         entry("xl/worksheets/sheet6.xml") { out -> writeFit(out, runs) }
         entry("xl/worksheets/sheet7.xml") { out -> writeScan(out, runs) }
+        entry("xl/worksheets/sheet8.xml") { out -> writePhases(out, runs.runs) }
+        entry("xl/worksheets/sheet9.xml") { out -> writeEvents(out, runs.runs) }
+        entry("xl/worksheets/sheet10.xml") { out -> writeResults(out, results, resultsOmitted, runs.runs) }
+        zip.putNextEntry(ZipEntry("xl/worksheets/sheet11.xml"))
+        writeComm(writer, frameEvents)
+        writer.flush()
+        zip.closeEntry()
 
         val charts = buildList {
             if (hasPoints) {
@@ -286,6 +395,11 @@ object SessionWorkbookWriter {
                     "斜率 N·m/°", "转角 °", "斜率 N·m/°",
                     Xml.range(SHEET_CHART_DATA, 5, 2, lastSlope), Xml.range(SHEET_CHART_DATA, 6, 2, lastSlope),
                     slopes.map { it?.angleDeg }, slopes.map { it?.slope?.let(::round3) }, COLOR_ANGLE, yMinZero = false))
+                // 工况着色：空程在哪里结束（= 有效加载起点）、停转保压多久、哪里扭矩掉下来，一眼可见。
+                add(phaseChart("扭矩–转角（按工况着色）", "转角 °", 1, angle, phaseY, last))
+                add(phaseChart("扭矩–接收时间（按工况着色）", "相对首点接收时间 s", 3, seconds, phaseY, last))
+                add(ChartSpec.Scatter("扭矩–接收时间（手机接收时基）", "扭矩 N·m", "相对首点接收时间 s", "扭矩 N·m",
+                    Xml.range(SHEET_CHART_DATA, 3, 2, last), Xml.range(SHEET_CHART_DATA, 2, 2, last), seconds, torque, COLOR_TIME))
                 // 各段叠加：同一隔振器重复试验时，转折位置是否稳定一眼可见。
                 add(multiRunChart(
                     title = if (overlay.isEmpty()) "各段叠加（有效加载不足，未计算）" else "各段叠加：扭矩–有效转角（对齐加载起点）",
@@ -305,8 +419,6 @@ object SessionWorkbookWriter {
                     xTitle = "候选位置（相对有效加载起点）°", yTitle = "残差改善 %", xCol = 21, yCol = 22,
                     runs = overlay.map { it.first }, ranges = scanRanges, rows = scanRows, yMinZero = true, extra = thresholdSeries,
                 ))
-                add(ChartSpec.Scatter("扭矩–接收时间（手机接收时基）", "扭矩 N·m", "相对首点接收时间 s", "扭矩 N·m",
-                    Xml.range(SHEET_CHART_DATA, 3, 2, last), Xml.range(SHEET_CHART_DATA, 2, 2, last), seconds, torque, COLOR_TIME))
                 add(ChartSpec.Scatter("转角–接收时间（转速与停顿）", "转角 °", "相对首点接收时间 s", "转角 °",
                     Xml.range(SHEET_CHART_DATA, 3, 2, last), Xml.range(SHEET_CHART_DATA, 1, 2, last), seconds, angle, COLOR_TIME))
                 val lastFrame = max(2, frameSeries.size + 1)
@@ -318,12 +430,12 @@ object SessionWorkbookWriter {
                     Xml.range(SHEET_CHART_DATA, 12, 2, lastFrame), Xml.range(SHEET_CHART_DATA, 14, 2, lastFrame),
                     frameSeconds, frameSeries.intervalMs.map { it.takeIf(Double::isFinite) }, COLOR_TIME))
             }
-            if (hasTargetActual) {
-                val firstRow = summaryLayout.targetActualFirstRow
-                add(ChartSpec.Bar("目标 vs 实际扭矩（结果帧）", "扭矩 N·m", "扭矩 N·m",
-                    Xml.range(SHEET_SUMMARY, 0, firstRow, firstRow + 1), Xml.range(SHEET_SUMMARY, 1, firstRow, firstRow + 1),
-                    listOf(SummaryLayout.TARGET_LABEL, SummaryLayout.ACTUAL_LABEL),
-                    listOf(summary.targetTorqueNm, summary.actualTorqueNm), COLOR_BAR))
+            if (hasResultChart) {
+                val firstRow = summaryLayout.torqueFirstRow
+                val labels = summaryLayout.torqueLabels
+                add(ChartSpec.Bar("结果帧扭矩（${lastResult?.modeText ?: "模式未知"}）", "扭矩 N·m", "扭矩 N·m",
+                    Xml.range(SHEET_SUMMARY, 0, firstRow, firstRow + labels.size - 1), Xml.range(SHEET_SUMMARY, 1, firstRow, firstRow + labels.size - 1),
+                    labels, listOf(summary.targetTorqueNm, summary.actualTorqueNm, summary.torqueLowerNm, summary.torqueUpperNm), COLOR_BAR))
             }
         }
         check(charts.size == chartCount) { "图表数与内容类型清单不一致" }
@@ -346,25 +458,31 @@ object SessionWorkbookWriter {
 
         entry("xl/workbook.xml") { it.write(workbook()) }
         entry("xl/_rels/workbook.xml.rels") { out ->
-            out.write(
-                relationships(
-                    listOf(
-                        Rel("rId1", REL_SHEET, "worksheets/sheet1.xml"),
-                        Rel("rId2", REL_SHEET, "worksheets/sheet2.xml"),
-                        Rel("rId3", REL_SHEET, "worksheets/sheet3.xml"),
-                        Rel("rId4", REL_SHEET, "worksheets/sheet4.xml"),
-                        Rel("rId5", REL_SHEET, "worksheets/sheet5.xml"),
-                        Rel("rId6", REL_SHEET, "worksheets/sheet6.xml"),
-                        Rel("rId7", REL_SHEET, "worksheets/sheet7.xml"),
-                        Rel("rId8", REL_STYLES, "styles.xml"),
-                    ),
-                ),
-            )
+            out.write(relationships((1..SHEET_PARTS).map { Rel("rId$it", REL_SHEET, "worksheets/sheet$it.xml") } + Rel("rId${SHEET_PARTS + 1}", REL_STYLES, "styles.xml")))
         }
         writer.flush()
         zip.finish()
         zip.flush()
         return WorkbookStats(processRows = written, chartRows = samples.count { it != null }, chartCount = charts.size)
+    }
+
+    /** 工况着色图：每个出现过的工况一条系列（引用「图表数据」AB 起各工况列），共用抽样点的横轴列。 */
+    private fun phaseChart(title: String, xTitle: String, xCol: Int, xValues: List<Double?>, phaseY: List<Array<Double?>>, last: Int): ChartSpec.Scatter {
+        val present = PHASES.filter { phase -> phaseY[phase.ordinal].any { it != null } }
+        val xRef = Xml.range(SHEET_CHART_DATA, xCol, 2, max(2, last))
+        fun yRef(phase: WorkingCondition.Phase) = Xml.range(SHEET_CHART_DATA, PHASE_COL + phase.ordinal, 2, max(2, last))
+        if (present.isEmpty()) {
+            return ChartSpec.Scatter("$title（未计算）", "扭矩 N·m", xTitle, "扭矩 N·m", xRef, yRef(PHASES.first()),
+                emptyList(), emptyList(), PHASE_COLORS.getValue(PHASES.first()))
+        }
+        val head = present.first()
+        return ChartSpec.Scatter(
+            title, head.label, xTitle, "扭矩 N·m", xRef, yRef(head), xValues, phaseY[head.ordinal].toList(), PHASE_COLORS.getValue(head),
+            extra = present.drop(1).map { phase ->
+                ChartSpec.ScatterSeries(phase.label, xRef, yRef(phase), xValues, phaseY[phase.ordinal].toList(), PHASE_COLORS.getValue(phase), markerOnly = false)
+            },
+            legend = true,
+        )
     }
 
     private fun chartNote(hasPoints: Boolean, total: Long, sampled: Int): String = when {
@@ -373,14 +491,15 @@ object SessionWorkbookWriter {
         else -> "图表点 = 全量 $total；运行段之间断开。$CHART_LEGEND"
     }
 
-    private val CHART_LEGEND = "紫色菱形为转折候选（未验证）；叠加图与残差改善图画最近 $MAX_OVERLAY_RUNS 段，全部段见「拟合明细」「候选扫描」。"
+    private val CHART_LEGEND = "紫色菱形为转折候选（未验证）；工况着色图里灰 = 空程、绿 = 加载、橙 = 停转保压、蓝 = 卸载、红 = 转动降扭；" +
+        "叠加图与残差改善图画最近 $MAX_OVERLAY_RUNS 段，全部段见「拟合明细」「候选扫描」。"
 
     /** 新运行段：与实时图同一口径（螺栓号变化、转角回落或回到 0 附近、接收间隔过长）。 */
     private fun isNewRun(previous: ProcessRow, row: ProcessRow): Boolean = TorqueAngleWindow.isNewRun(
         previous.boltNo, previous.angleDeg, previous.receivedAtMillis, row.boltNo, row.angleDeg, row.receivedAtMillis,
     )
 
-    /** 一个运行段的统计与转折候选（[result] 不含斜率/明细，明细另存在 [detail]，超出行数上限时为 null）。 */
+    /** 一个运行段的统计、转折候选与工况（[result] 不含斜率/明细，明细另存在 [detail]，超出行数上限时为 null）。 */
     private class RunSummary(
         val index: Int,
         val firstSeq: Long,
@@ -395,6 +514,15 @@ object SessionWorkbookWriter {
         val lineSlope: Double?,
         val best: LoadingAnalysis.BestHinge?,
         val detail: LoadingAnalysis.Detail?,
+        /** 工况划分；单段点数超过 [MAX_ANALYSIS_POINTS] 时为 null。 */
+        val condition: WorkingCondition.Result?,
+        /** 各阶段首末点的记录内序号（每阶段两个数）。 */
+        val segmentSeqs: LongArray,
+        /** 各事件所在点的记录内序号、接收时间、转角、扭矩（与 condition.events 一一对应）。 */
+        val eventSeqs: LongArray,
+        val eventMillis: LongArray,
+        val eventAngles: DoubleArray,
+        val eventTorques: DoubleArray,
     ) {
         val seconds: Double get() = (endMillis - startMillis) / 1000.0
 
@@ -420,6 +548,8 @@ object SessionWorkbookWriter {
             private set
         private var angles = DoubleArray(1_024)
         private var torques = DoubleArray(1_024)
+        private var millis = LongArray(1_024)
+        private var seqs = LongArray(1_024)
         private var n = 0
         private var first: ProcessRow? = null
         private var last: ProcessRow? = null
@@ -433,9 +563,13 @@ object SessionWorkbookWriter {
                 if (n == angles.size) {
                     angles = angles.copyOf(n * 2)
                     torques = torques.copyOf(n * 2)
+                    millis = millis.copyOf(n * 2)
+                    seqs = seqs.copyOf(n * 2)
                 }
                 angles[n] = row.angleDeg
                 torques[n] = row.torqueNm
+                millis[n] = row.receivedAtMillis
+                seqs[n] = row.index
             }
             n += 1
             if (row.angleDeg.isFinite()) maxAngle = max(maxAngle, row.angleDeg)
@@ -452,6 +586,13 @@ object SessionWorkbookWriter {
             } else {
                 LoadingAnalysis.analyze(angles, torques, n, withDetail = true)
             }
+            val condition = if (n > MAX_ANALYSIS_POINTS) null else WorkingCondition.classify(angles, torques, millis, n)
+            val segmentSeqs = condition?.segments?.let { list -> LongArray(list.size * 2) { k -> seqs[if (k % 2 == 0) list[k / 2].start else list[k / 2].end] } } ?: LongArray(0)
+            val events = condition?.events.orEmpty()
+            val eventSeqs = LongArray(events.size) { k -> seqs[events[k].index] }
+            val eventMillis = LongArray(events.size) { k -> millis[events[k].index] }
+            val eventAngles = DoubleArray(events.size) { k -> angles[events[k].index] }
+            val eventTorques = DoubleArray(events.size) { k -> torques[events[k].index] }
             val detail = result.detail
             val kept = detail?.takeIf { fitRows + it.bins.size <= MAX_DETAIL_ROWS && scanRows + it.scan.size <= MAX_DETAIL_ROWS }
             if (kept != null) {
@@ -466,6 +607,8 @@ object SessionWorkbookWriter {
                 startAngle = start.angleDeg, maxAngle = maxAngle,
                 result = result.copy(slopes = emptyList(), detail = null),
                 lineSlope = detail?.lineSlope, best = detail?.best, detail = kept,
+                condition = condition, segmentSeqs = segmentSeqs,
+                eventSeqs = eventSeqs, eventMillis = eventMillis, eventAngles = eventAngles, eventTorques = eventTorques,
             )
             runs += summary
             if (detail != null && detail.bins.isNotEmpty()) {
@@ -484,7 +627,11 @@ object SessionWorkbookWriter {
     }
 
     private fun writeRuns(out: Writer, runs: List<RunSummary>) {
-        val sheet = SheetWriter(out, listOf(7.0, 9.0, 9.0, 8.0, 7.0, 22.0, 8.0) + List(15) { 11.0 } + listOf(36.0), freezeHeader = true)
+        val sheet = SheetWriter(
+            out,
+            listOf(7.0, 9.0, 9.0, 8.0, 7.0, 22.0, 8.0) + List(15) { 11.0 } + listOf(36.0, 40.0) + List(6) { 11.0 } + listOf(36.0),
+            freezeHeader = true,
+        )
         sheet.begin()
         sheet.row(runHeaders.map(::text), Styles.HEADER)
         runs.forEach { run ->
@@ -499,13 +646,150 @@ object SessionWorkbookWriter {
                     derived(run.best?.angleDeg), derived(run.best?.improvement?.times(100.0)),
                     derived(c?.angleDeg), derived(c?.torqueNm), derived(c?.slopeBefore), derived(c?.slopeAfter), derived(c?.improvement?.times(100.0)),
                     text(if (c != null) "转折候选（未验证）" else (r.outcome as LoadingAnalysis.NotFound).reason),
-                ),
+                ) + conditionCells(run.condition),
             )
         }
         sheet.row(emptyList())
         RUN_NOTES.forEach { sheet.row(listOf(text(it)), Styles.NOTE) }
         sheet.end()
     }
+
+    private fun conditionCells(condition: WorkingCondition.Result?): List<Cell> {
+        if (condition == null) return listOf(text("未分析")) + List(7) { Cell.Blank }
+        return listOf(
+            text(condition.sequence()),
+            derived(condition.angleIn(WorkingCondition.Phase.FREE_TRAVEL)),
+            derived(condition.angleIn(WorkingCondition.Phase.LOADING)),
+            derived(condition.secondsIn(WorkingCondition.Phase.STALL)),
+            num(condition.count(WorkingCondition.EventKind.SLIP)),
+            num(condition.count(WorkingCondition.EventKind.BACKTRACK)),
+            num(condition.count(WorkingCondition.EventKind.GAP)),
+            text(condition.verdict),
+        )
+    }
+
+    /** 工况分段：每段按阶段列出起止序号、时间、转角、扭矩与平均转速。 */
+    private fun writePhases(out: Writer, runs: List<RunSummary>) {
+        val sheet = SheetWriter(out, listOf(7.0, 8.0, 10.0, 9.0, 9.0, 7.0, 22.0, 8.0, 10.0, 10.0, 10.0, 12.0, 12.0, 12.0, 12.0), freezeHeader = true)
+        sheet.begin()
+        sheet.row(phaseHeaders.map(::text), Styles.HEADER)
+        var written = 0
+        var omitted = 0
+        runs.forEach { run ->
+            val condition = run.condition ?: return@forEach
+            condition.segments.forEachIndexed { k, seg ->
+                if (written >= MAX_DETAIL_ROWS) {
+                    omitted += 1
+                    return@forEachIndexed
+                }
+                val speed = if (seg.seconds > 0.0) seg.angleChange / seg.seconds else null
+                sheet.row(
+                    listOf(
+                        num(run.index), num(k + 1), text(seg.phase.label), num(run.segmentSeqs[2 * k]), num(run.segmentSeqs[2 * k + 1]), num(seg.points),
+                        dateTime(seg.startMillis), num(seg.seconds), num(seg.startAngle), num(seg.endAngle), derived(seg.angleChange),
+                        num(seg.startTorque), num(seg.endTorque), num(seg.maxTorque), derived(speed),
+                    ),
+                )
+                written += 1
+            }
+        }
+        sheet.row(emptyList())
+        PHASE_NOTES.forEach { sheet.row(listOf(text(it)), Styles.NOTE) }
+        if (omitted > 0) sheet.row(listOf(text("另有 $omitted 个阶段超过行数上限（$MAX_DETAIL_ROWS 行）未列出；逐点工况见「过程数据」的「工况」列。")), Styles.NOTE)
+        sheet.end()
+    }
+
+    /** 工况事件：疑似打滑、数据间断、转角回退，逐条列出位置与数值。 */
+    private fun writeEvents(out: Writer, runs: List<RunSummary>) {
+        val sheet = SheetWriter(out, listOf(7.0, 9.0, 24.0, 10.0, 10.0, 10.0, 10.0, 12.0), freezeHeader = true)
+        sheet.begin()
+        sheet.row(eventHeaders.map(::text), Styles.HEADER)
+        var written = 0
+        var omitted = 0
+        runs.forEach { run ->
+            val condition = run.condition ?: return@forEach
+            condition.events.forEachIndexed { k, event ->
+                if (written >= MAX_LIST_ROWS) {
+                    omitted += 1
+                    return@forEachIndexed
+                }
+                sheet.row(
+                    listOf(
+                        num(run.index), num(run.eventSeqs[k]), dateTime(run.eventMillis[k]), text(event.kind.label), derived(event.value), text(event.kind.unit),
+                        num(run.eventAngles[k]), num(run.eventTorques[k]),
+                    ),
+                )
+                written += 1
+            }
+        }
+        if (written == 0) sheet.row(listOf(text("本记录未发现疑似打滑、数据间断或转角回退。")), Styles.NOTE)
+        sheet.row(emptyList())
+        EVENT_NOTES.forEach { sheet.row(listOf(text(it)), Styles.NOTE) }
+        if (omitted > 0) sheet.row(listOf(text("另有 $omitted 条事件超过行数上限（$MAX_LIST_ROWS 行）未列出；逐点事件见「过程数据」的「事件」列。")), Styles.NOTE)
+        sheet.end()
+    }
+
+    /** 结果帧：每个 0x15 / 0x55 按协议逐字段解出；M1 / M2 字段含义不同，字段名逐行写明。 */
+    private fun writeResults(out: Writer, results: List<ResultRow>, omitted: Int, runs: List<RunSummary>) {
+        val sheet = SheetWriter(
+            out,
+            listOf(8.0, 24.0, 9.0, 7.0, 7.0, 12.0, 7.0, 16.0, 12.0, 7.0, 20.0, 12.0, 16.0, 12.0, 16.0, 12.0, 18.0, 11.0, 16.0, 11.0, 11.0, 11.0, 11.0, 11.0, 15.0, 15.0, 60.0),
+            freezeHeader = true,
+        )
+        sheet.begin()
+        sheet.row(resultHeaders.map(::text), Styles.HEADER)
+        results.forEach { item ->
+            val r = item.decoded
+            val run = item.run?.let { runs.getOrNull(it - 1) }
+            sheet.row(
+                listOf(
+                    num(item.row.index), dateTime(item.row.receivedAtMillis), num(item.run), text(hex(r.functionCode)), text(r.statusCode?.let(::hex)),
+                    text(r.statusLabel), text(r.kindLabel), text(r.modeText), text(r.employeeId), num(r.boltNo),
+                    dateTime(r.clockMillis), num(r.clockMillis?.let { (it - item.row.receivedAtMillis) / 1000.0 }),
+                    text(r.torque1Name), num(r.torque1), text(r.torque2Name), num(r.torque2),
+                    text(r.angle1Name), num(r.angle1), text(r.angle2Name), num(r.angle2),
+                    num(r.torqueLower), num(r.torqueUpper), num(r.angleLower), num(r.angleUpper),
+                    num(run?.result?.peakTorqueNm), num(run?.maxAngle?.takeIf { it.isFinite() }), text(item.row.rawHex),
+                ),
+            )
+        }
+        if (results.isEmpty()) sheet.row(listOf(text("本记录没有收到 0x15 / 0x55 结果帧。")), Styles.NOTE)
+        sheet.row(emptyList())
+        RESULT_NOTES.forEach { sheet.row(listOf(text(it)), Styles.NOTE) }
+        if (omitted > 0) sheet.row(listOf(text("另有 $omitted 个结果帧超过行数上限（$MAX_LIST_ROWS 行）未列出，原始 HEX 见「过程数据」。")), Styles.NOTE)
+        sheet.end()
+    }
+
+    /** 通信记录：按时间列出收发的非 0x12 帧与关键操作（0x12 逐点在「过程数据」）。 */
+    private suspend fun writeComm(out: Writer, events: (suspend (emit: suspend (FrameEventRow) -> Unit) -> Unit)?) {
+        val sheet = SheetWriter(out, listOf(8.0, 24.0, 16.0, 11.0, 6.0, 8.0, 14.0, 40.0, 60.0), freezeHeader = true)
+        sheet.begin()
+        sheet.row(commHeaders.map(::text), Styles.HEADER)
+        var written = 0
+        var omitted = 0
+        var first: Long? = null
+        events?.invoke { event ->
+            if (written >= MAX_LIST_ROWS) {
+                omitted += 1
+                return@invoke
+            }
+            val start = first ?: event.atMillis.also { first = it }
+            sheet.row(
+                listOf(
+                    num(event.index), dateTime(event.atMillis), num(event.atMillis), num((event.atMillis - start) / 1000.0), text(event.direction),
+                    text(event.functionCode?.let(::hex)), text(event.functionCode?.let(MeasurementCsvExporter::functionLabel)), text(event.summary), text(event.rawHex),
+                ),
+            )
+            written += 1
+        }
+        if (written == 0) sheet.row(listOf(text("本记录没有通信记录（旧版本记录，或连接期间没有非 0x12 帧）。")), Styles.NOTE)
+        sheet.row(emptyList())
+        COMM_NOTES.forEach { sheet.row(listOf(text(it)), Styles.NOTE) }
+        if (omitted > 0) sheet.row(listOf(text("另有 $omitted 条超过行数上限（$MAX_LIST_ROWS 行）未列出。")), Styles.NOTE)
+        sheet.end()
+    }
+
+    private fun hex(value: Int): String = "0x%02X".format(value and 0xFF)
 
     /** 拟合得出的量（非原始采样）保留 3 位小数，避免 301.9806253 这类假精度。 */
     private fun derived(value: Double?) = num(value?.let(::round3))
@@ -644,6 +928,9 @@ object SessionWorkbookWriter {
             private set
         var frameSpeed: Double? = null
             private set
+        /** 本点在所属运行段里的下标（从 0 起，只数过程点）；与第一遍的段内下标一致。 */
+        var runPoint = 0
+            private set
         private var previous: ProcessRow? = null
         private var previousProcess: ProcessRow? = null
         private var runStartMillis = 0L
@@ -676,6 +963,7 @@ object SessionWorkbookWriter {
             val prevProcess = previousProcess
             if (prevProcess == null || isNewRun(prevProcess, row)) {
                 run += 1
+                runPoint = 0
                 runStartMillis = row.receivedAtMillis
                 runStartAngle = row.angleDeg
                 lastFrameAngle = null
@@ -685,12 +973,15 @@ object SessionWorkbookWriter {
                     lastFrameAngle = row.angleDeg
                     lastFrameMillis = row.receivedAtMillis
                 }
-            } else if (newFrame) {
-                val dt = (row.receivedAtMillis - lastFrameMillis) / 1000.0
-                frameIntervalMs = row.receivedAtMillis - lastFrameMillis
-                processFrameSpeed = lastFrameAngle?.takeIf { dt > 0.0 }?.let { (row.angleDeg - it) / dt }
-                lastFrameAngle = row.angleDeg
-                lastFrameMillis = row.receivedAtMillis
+            } else {
+                runPoint += 1
+                if (newFrame) {
+                    val dt = (row.receivedAtMillis - lastFrameMillis) / 1000.0
+                    frameIntervalMs = row.receivedAtMillis - lastFrameMillis
+                    processFrameSpeed = lastFrameAngle?.takeIf { dt > 0.0 }?.let { (row.angleDeg - it) / dt }
+                    lastFrameAngle = row.angleDeg
+                    lastFrameMillis = row.receivedAtMillis
+                }
             }
             frameSpeed = processFrameSpeed
             runSeconds = (row.receivedAtMillis - runStartMillis) / 1000.0
@@ -826,7 +1117,7 @@ object SessionWorkbookWriter {
             }
     }
 
-    private data class Sample(val index: Long, val angle: Double, val torque: Double, val seconds: Double)
+    private data class Sample(val index: Long, val angle: Double, val torque: Double, val seconds: Double, val phase: WorkingCondition.Phase?)
 
     /** 分桶抽样：每桶留最小/最大扭矩点（按原顺序），段边界处插入 null 作为断点。 */
     private class ChartSampler(total: Long) {
@@ -835,13 +1126,13 @@ object SessionWorkbookWriter {
         private var bucket = ArrayList<Sample>()
         private var previous: ProcessRow? = null
 
-        fun accept(row: ProcessRow, seconds: Double) {
+        fun accept(row: ProcessRow, seconds: Double, phase: WorkingCondition.Phase?) {
             val prev = previous
             if (prev != null && isNewRun(prev, row)) {
                 flush()
                 if (output.isNotEmpty() && output.last() != null) output += null
             }
-            bucket += Sample(row.index, row.angleDeg, row.torqueNm, seconds)
+            bucket += Sample(row.index, row.angleDeg, row.torqueNm, seconds, phase)
             if (bucket.size >= bucketSize) flush()
             previous = row
         }
@@ -866,18 +1157,29 @@ object SessionWorkbookWriter {
         }
     }
 
-    /** 概要页：记录 · 过程数据统计 · 扳手结果帧（目标/实际两行供柱状图引用）· 说明 · 导出信息。 */
+    /** 概要页：记录 · 过程数据统计 · 转折候选 · 工况 · 扳手结果帧（扭矩四行供柱状图引用）· 说明 · 导出信息。 */
     private class SummaryLayout(
         private val summary: WorkbookSummary,
         private val totalPoints: Long,
         private val stats: ProcessStats,
         private val runs: List<RunSummary>,
+        private val lastResult: DecodedResult?,
+        private val resultFrames: Int,
     ) {
-        var targetActualFirstRow: Int = 0
+        /** 结果帧扭矩四行（字段1、字段2、下限、上限）的首行行号，柱状图引用。 */
+        var torqueFirstRow: Int = 0
             private set
 
+        /** 结果帧扭矩四行的名称：按功能码与 M1 / M2 给出协议字段名。 */
+        val torqueLabels: List<String> = listOf(
+            "${lastResult?.torque1Name ?: "目标扭矩"} N·m",
+            "${lastResult?.torque2Name ?: "实际扭矩"} N·m",
+            "${lastResult?.torqueLimitName ?: "扭矩"}下限 N·m",
+            "${lastResult?.torqueLimitName ?: "扭矩"}上限 N·m",
+        )
+
         fun write(out: Writer) {
-            val sheet = SheetWriter(out, listOf(22.0, 30.0), freezeHeader = false)
+            val sheet = SheetWriter(out, listOf(26.0, 34.0), freezeHeader = false)
             sheet.begin()
             sheet.row(listOf(text("WiFi 扳手 · 测量记录 R${summary.recordId}")), Styles.TITLE)
             fun section(title: String) {
@@ -911,15 +1213,36 @@ object SessionWorkbookWriter {
             line("末段前 / 后斜率 N·m/°", text(lastCandidate?.let { pair(it.slopeBefore, it.slopeAfter) } ?: ""))
             line("末段判定", text(lastRun?.let { run -> if (lastCandidate != null) "转折候选（未验证）" else (run.result.outcome as LoadingAnalysis.NotFound).reason } ?: "--"))
 
-            section("扳手结果帧")
-            line("结果状态", text(summary.resultStatus))
-            targetActualFirstRow = sheet.rowsWritten + 1
-            line(TARGET_LABEL, num(summary.targetTorqueNm))
-            line(ACTUAL_LABEL, num(summary.actualTorqueNm))
-            line("目标转角 °", num(summary.targetAngleDeg))
-            line("实际转角 °", num(summary.actualAngleDeg))
-            line("扭矩下限 / 上限 N·m", text(pair(summary.torqueLowerNm, summary.torqueUpperNm)))
-            line("转角下限 / 上限 °", text(pair(summary.angleLowerDeg, summary.angleUpperDeg)))
+            section("工况（开发默认阈值，待真机标定）")
+            val conditions = runs.mapNotNull { it.condition }
+            fun total(kind: WorkingCondition.EventKind) = conditions.sumOf { it.count(kind) }
+            line("全程未受力的运行段", text(if (runs.isEmpty()) "--" else "${conditions.count { it.noLoad }} / ${runs.size}"))
+            line("有疑似打滑的运行段", text(if (runs.isEmpty()) "--" else "${conditions.count { it.count(WorkingCondition.EventKind.SLIP) > 0 }} / ${runs.size}"))
+            line("疑似打滑 / 转角回退 / 数据间断（次）", text(if (runs.isEmpty()) "--" else
+                "${total(WorkingCondition.EventKind.SLIP)} / ${total(WorkingCondition.EventKind.BACKTRACK)} / ${total(WorkingCondition.EventKind.GAP)}"))
+            val lastCondition = lastRun?.condition
+            line("末段工况次序", text(lastCondition?.sequence() ?: "--"))
+            line("末段空程转角 °", num(lastCondition?.angleIn(WorkingCondition.Phase.FREE_TRAVEL)?.let(::round3)))
+            line("末段加载转角 °", num(lastCondition?.angleIn(WorkingCondition.Phase.LOADING)?.let(::round3)))
+            line("末段停转保压时长 s", num(lastCondition?.secondsIn(WorkingCondition.Phase.STALL)?.let(::round3)))
+            line("末段判读", text(lastCondition?.verdict ?: "--"))
+
+            section("扳手结果帧（最后一帧；全部见「结果帧」）")
+            line("结果", text(summary.resultStatus))
+            line("结果帧个数", num(resultFrames))
+            line("功能码 / 状态码", text(lastResult?.let { r -> "${"0x%02X".format(r.functionCode)} / ${r.statusCode?.let { "0x%02X".format(it) } ?: "--"}" } ?: ""))
+            line("判定", text(lastResult?.kindLabel ?: ""))
+            line("参数模式", text(lastResult?.modeText ?: ""))
+            line("员工号 / 螺栓号", text(lastResult?.let { "${it.employeeId.ifBlank { "--" }} / ${it.boltNo}" } ?: ""))
+            line("扳手时钟", dateTime(lastResult?.clockMillis))
+            torqueFirstRow = sheet.rowsWritten + 1
+            line(torqueLabels[0], num(summary.targetTorqueNm))
+            line(torqueLabels[1], num(summary.actualTorqueNm))
+            line(torqueLabels[2], num(summary.torqueLowerNm))
+            line(torqueLabels[3], num(summary.torqueUpperNm))
+            line("${lastResult?.angle1Name ?: "目标转角"} °", num(summary.targetAngleDeg))
+            line("${lastResult?.angle2Name ?: "实际转角"} °", num(summary.actualAngleDeg))
+            line("${lastResult?.angleLimitName ?: "转角"}下限 / 上限 °", text(pair(summary.angleLowerDeg, summary.angleUpperDeg)))
 
             section("说明")
             NOTES.forEach { sheet.row(listOf(text(it)), Styles.NOTE) }
@@ -936,18 +1259,145 @@ object SessionWorkbookWriter {
         private fun round3(value: Double): Double = Math.rint(value * 1_000.0) / 1_000.0
 
         companion object {
-            const val TARGET_LABEL = "目标扭矩 N·m"
-            const val ACTUAL_LABEL = "实际扭矩 N·m"
             val NOTES = listOf(
-                "「过程数据」为本记录全部过程点，未截断；另带运行段、帧号、帧内序号、段内时间/转角增量、帧间转速、接收间隔等派生列。",
+                "「过程数据」为本记录全部过程点，未截断；另带运行段、帧号、帧内序号、段内时间/转角增量、相对有效加载起点转角、帧间转速、接收间隔、工况、事件等派生列。",
                 "接收时间为手机接收时间（毫秒），同一帧的多个点共用；0x12 帧约每秒一帧，帧内各点没有单独时间。",
-                "图表、统计、转折候选只用 0x12 过程帧；0x15/0x55 结果帧只列在「过程数据」里。",
+                "图表、统计、转折候选、工况只用 0x12 过程帧；0x15/0x55 结果帧逐字段见「结果帧」，收发的其余帧见「通信记录」。",
                 "转折候选为两段直线拟合的斜率变化位置，未经实测验证，不是平衡点结论；逐段汇总见「运行段」，计算过程见「拟合明细」「候选扫描」。",
+                "工况：受力门槛 = 段峰值 × ${(WorkingCondition.ENGAGE_FRACTION * 100).toInt()}%（且 ≥ ${WorkingCondition.ENGAGE_FLOOR_NM.toInt()} N·m），与有效加载起点同口径；" +
+                    "整段峰值 < ${WorkingCondition.NO_LOAD_PEAK_NM.toInt()} N·m 记「空转」；前后各 ${WorkingCondition.WINDOW} 点转角净变化 ≥ ${WorkingCondition.MOVE_DEG.toInt()}° 算在转；阈值为开发默认值，待真机标定。",
+                "0x15 的扭矩/角度字段在 M1、M2 下含义不同（M2 的 28-29 是预设扭矩实际值，不是目标扭矩），本表按结果帧模式写字段名。",
                 "运行段切分：螺栓号变化、转角回落超过 ${TorqueAngleWindow.RESET_DROP_DEG.toInt()}°、转角从 ≥ ${TorqueAngleWindow.RESTART_FROM_DEG.toInt()}° 回到 ≤ ${TorqueAngleWindow.RESTART_AT_DEG.toInt()}°、或接收间隔超过 ${TorqueAngleWindow.GAP_MILLIS / 1000} s。",
                 "未标定：不含顶升力等正式力值。",
             )
         }
     }
+
+    /** 结果帧的统一视图（0x15 / 0x55），字段名按协议与模式给出。 */
+    private class DecodedResult(
+        val functionCode: Int,
+        val statusCode: Int?,
+        val statusLabel: String,
+        val kind: ResultKind,
+        val modeText: String,
+        val employeeId: String,
+        val boltNo: Int,
+        val clockMillis: Long?,
+        val torque1Name: String,
+        val torque1: Double?,
+        val torque2Name: String,
+        val torque2: Double?,
+        val angle1Name: String,
+        val angle1: Double?,
+        val angle2Name: String,
+        val angle2: Double?,
+        val torqueLimitName: String,
+        val torqueLower: Double?,
+        val torqueUpper: Double?,
+        val angleLimitName: String,
+        val angleLower: Double?,
+        val angleUpper: Double?,
+    ) {
+        val kindLabel: String get() = when (kind) {
+            ResultKind.OK -> "OK"
+            ResultKind.NG -> "NG"
+            ResultKind.UNKNOWN -> "未知"
+        }
+    }
+
+    private class ResultRow(val row: ProcessRow, val run: Int?, val decoded: DecodedResult)
+
+    /** 由入库的原始 HEX 重新按协议解出结果帧；不是 0x15 / 0x55 或解不出时返回 null。 */
+    private fun decodeResult(rawHex: String): DecodedResult? {
+        val packet = runCatching { WrenchPacketParser().append(HexUtils.hexToBytes(rawHex)).firstOrNull() }.getOrNull() ?: return null
+        return when (packet.functionCode) {
+            WrenchPacket.FUNC_RESULT -> runCatching { ResultFrameDecoder.decode(packet) }.getOrNull()?.let { r ->
+                DecodedResult(
+                    functionCode = packet.functionCode, statusCode = r.status.code, statusLabel = r.status.label, kind = r.status.kind,
+                    modeText = r.modeText, employeeId = r.employeeId, boltNo = r.boltNo,
+                    clockMillis = wrenchClock(r.year, r.month, r.day, r.hour, r.minute, r.second),
+                    torque1Name = r.torqueField1Name, torque1 = r.targetTorqueNm, torque2Name = r.torqueField2Name, torque2 = r.actualTorqueNm,
+                    angle1Name = r.angleField1Name, angle1 = r.targetAngleDeg, angle2Name = r.angleField2Name, angle2 = r.actualAngleDeg,
+                    torqueLimitName = r.torqueLimitName, torqueLower = r.torqueLowerNm, torqueUpper = r.torqueUpperNm,
+                    angleLimitName = r.angleLimitName, angleLower = r.angleLowerDeg, angleUpper = r.angleUpperDeg,
+                )
+            }
+            WrenchPacket.FUNC_PULSE_RESULT -> runCatching { PulseResultFrameDecoder.decode(packet) }.getOrNull()?.let { r ->
+                DecodedResult(
+                    functionCode = packet.functionCode, statusCode = r.status.code, statusLabel = r.status.label, kind = r.status.kind,
+                    modeText = r.modeText, employeeId = r.employeeId, boltNo = r.boltNo,
+                    clockMillis = wrenchClock(r.year, r.month, r.day, r.hour, r.minute, r.second),
+                    torque1Name = "目标扭矩（÷10）", torque1 = r.targetTorqueNm, torque2Name = "实际扭矩（÷10）", torque2 = r.actualTorqueNm,
+                    angle1Name = "", angle1 = null, angle2Name = "实际角度", angle2 = r.actualAngleDeg,
+                    torqueLimitName = "扭矩", torqueLower = null, torqueUpper = null,
+                    angleLimitName = "角度", angleLower = null, angleUpper = null,
+                )
+            }
+            else -> null
+        }
+    }
+
+    /** 结果帧自带的扳手时钟（按本地时区）；字段不合法时为 null。 */
+    private fun wrenchClock(year: Int?, month: Int?, day: Int?, hour: Int?, minute: Int?, second: Int?): Long? {
+        if (year == null || month == null || day == null || hour == null || minute == null || second == null) return null
+        return runCatching { LocalDateTime.of(year, month, day, hour, minute, second).atZone(ZONE).toInstant().toEpochMilli() }.getOrNull()
+    }
+
+    private val ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+
+    /** 第二遍写「过程数据」时按段内下标取该点的事件（段内下标单调递增，游标只前进）。 */
+    private class EventCursor(private val runs: List<RunSummary>) {
+        private var run = -1
+        private var k = 0
+
+        fun at(runIndex: Int, point: Int): String? {
+            if (runIndex != run) {
+                run = runIndex
+                k = 0
+            }
+            val events = runs.getOrNull(runIndex - 1)?.condition?.events ?: return null
+            while (k < events.size && events[k].index < point) k += 1
+            var j = k
+            var text: String? = null
+            while (j < events.size && events[j].index == point) {
+                val e = events[j]
+                val value = Xml.number(Math.rint(e.value * 10.0) / 10.0)
+                val item = when (e.kind) {
+                    WorkingCondition.EventKind.SLIP -> "疑似打滑（扭矩降 $value%）"
+                    WorkingCondition.EventKind.GAP -> "数据间断 $value s"
+                    WorkingCondition.EventKind.BACKTRACK -> "转角回退 $value°"
+                }
+                text = if (text == null) item else "$text；$item"
+                j += 1
+            }
+            return text
+        }
+    }
+
+    private val PHASE_NOTES = listOf(
+        "工况按前后各 ${WorkingCondition.WINDOW} 点的转角 / 扭矩变化判断：未受力且在转 = 空程（本段尚未受力）/ 脱开空转（受力之后）；受力且在转 = 加载（扭矩明显下降则为转动降扭）；" +
+            "受力且不转 = 停转保压（扭矩明显下降则为卸载）；转角在减 = 回退；整段峰值很小 = 空转；不受力也不转 = 静止。",
+        "短于 ${WorkingCondition.MIN_PHASE_POINTS} 点的阶段并入相邻阶段；「空程」结束处即有效加载起点（与转折候选同一口径）。",
+        "时长按手机接收时间计（同一帧各点同一时间），分辨率约 1 帧（≈1 s）。反转松螺栓时出现「转动降扭」「脱开空转」属正常现象。",
+        "阈值为开发默认值，未经真机标定；工况只描述现象，不是故障结论。",
+    )
+
+    private val EVENT_NOTES = listOf(
+        "疑似打滑：相邻两点扭矩下降 ≥ ${(WorkingCondition.SLIP_DROP_FRACTION * 100).toInt()}%，且转角仍在增加（螺栓还在转）；卸载时扭矩降、转角停住，不算打滑。连续下降只记第一次。与扳手 0x15 状态 0x13「NG-打滑」互为参照。",
+        "数据间断：段内相邻两点接收间隔 > ${WorkingCondition.GAP_MILLIS / 1000.0} s（0x12 约每秒一帧，漏了一帧以上）；超过 ${TorqueAngleWindow.GAP_MILLIS / 1000} s 则切成新运行段。",
+        "转角回退：相邻两点转角下降 ≥ ${WorkingCondition.BACKTRACK_EVENT_DEG.toInt()}°；回落超过 ${TorqueAngleWindow.RESET_DROP_DEG.toInt()}° 视为新运行段。",
+    )
+
+    private val RESULT_NOTES = listOf(
+        "0x15 字段按协议原位解出：扭矩、角度为整数（不缩放）；0x55 扭矩 ÷10。状态码 0x00/0x01/0x02 为 OK，0x10–0x16 为 NG（扭矩/角度越限、打滑、重复拧紧）。",
+        "M1：字段1 = 目标扭矩、字段2 = 目标扭矩实际值、角度字段1 固定 0；M2：字段1 = 预设扭矩实际值、字段2 = 最终扭矩实际值、角度字段1 = 目标角度设置值。",
+        "扳手时钟为结果帧自带时间（可由 0x21/0x22 对时）；「扳手时钟−手机接收」可看两边时钟差。所属运行段为结果帧到达前最后一个 0x12 运行段。",
+    )
+
+    private val COMM_NOTES = listOf(
+        "记录本次连接期间收发的非 0x12 帧：应答 0x06、状态 0x05（错误码、方向位）、对时 0x21/0x22、电量 0x04、SN 0x26、结果 0x15/0x55 与确认 0x17，以及手机发出的 0x11/0x01/0x10/0x25。",
+        "0x12 过程帧逐点见「过程数据」；通信层每分钟自动发的 0x33 保活不逐条记录。",
+    )
 
     private data class Rel(val id: String, val type: String, val target: String)
 
@@ -970,13 +1420,17 @@ object SessionWorkbookWriter {
         append("</Relationships>")
     }
 
+    /** 工作表部件数（sheet1..sheet11）。 */
+    private const val SHEET_PARTS = 11
+
     private fun workbook(): String = buildString {
         append(Xml.HEADER)
         append("<workbook xmlns=\"${Xml.NS_MAIN}\" xmlns:r=\"${Xml.NS_REL}\">")
         append("<bookViews><workbookView activeTab=\"1\"/></bookViews><sheets>")
-        // 标签顺序：概要 · 图表 · 运行段 · 拟合明细 · 候选扫描 · 过程数据 · 图表数据（rId 对应 sheet1/2/5/6/7/3/4）。
+        // 标签顺序：概要 · 图表 · 运行段 · 工况分段 · 工况事件 · 结果帧 · 拟合明细 · 候选扫描 · 通信记录 · 过程数据 · 图表数据。
         listOf(
-            SHEET_SUMMARY to 1, SHEET_CHARTS to 2, SHEET_RUNS to 5, SHEET_FIT to 6, SHEET_SCAN to 7, SHEET_DATA to 3, SHEET_CHART_DATA to 4,
+            SHEET_SUMMARY to 1, SHEET_CHARTS to 2, SHEET_RUNS to 5, SHEET_PHASES to 8, SHEET_EVENTS to 9, SHEET_RESULTS to 10,
+            SHEET_FIT to 6, SHEET_SCAN to 7, SHEET_COMM to 11, SHEET_DATA to 3, SHEET_CHART_DATA to 4,
         ).forEachIndexed { index, (name, part) ->
             append("<sheet name=\"${Xml.escape(name)}\" sheetId=\"${index + 1}\" r:id=\"rId$part\"/>")
         }
@@ -989,7 +1443,7 @@ object SessionWorkbookWriter {
         append("<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>")
         append("<Default Extension=\"xml\" ContentType=\"application/xml\"/>")
         append("<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>")
-        for (sheet in 1..7) {
+        for (sheet in 1..SHEET_PARTS) {
             append("<Override PartName=\"/xl/worksheets/sheet$sheet.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")
         }
         append("<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>")

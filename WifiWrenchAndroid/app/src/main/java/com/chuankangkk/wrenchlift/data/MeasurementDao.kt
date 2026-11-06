@@ -119,6 +119,15 @@ interface MeasurementDao {
     @Query("SELECT COUNT(*) FROM torque_points WHERE sessionId = :sessionId AND id <= :throughId")
     suspend fun countPointsThrough(sessionId: Long, throughId: Long): Long
 
+    @Insert
+    suspend fun insertFrameEvents(entities: List<FrameEventEntity>)
+
+    @Query("SELECT MAX(id) FROM frame_events WHERE sessionId = :sessionId")
+    suspend fun lastFrameEventId(sessionId: Long): Long?
+
+    @Query("SELECT * FROM frame_events WHERE sessionId = :sessionId AND id > :afterId AND id <= :throughId ORDER BY id LIMIT :limit")
+    suspend fun frameEventsPage(sessionId: Long, afterId: Long, throughId: Long, limit: Int = 1000): List<FrameEventEntity>
+
     @Query("SELECT * FROM torque_points WHERE sessionId = :sessionId AND id > :afterId AND id <= :throughId ORDER BY id LIMIT :limit")
     suspend fun pointsPage(sessionId: Long, afterId: Long, throughId: Long, limit: Int = 1000): List<TorquePointEntity>
 }

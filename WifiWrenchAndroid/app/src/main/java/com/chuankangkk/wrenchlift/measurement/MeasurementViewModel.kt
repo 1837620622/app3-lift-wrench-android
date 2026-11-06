@@ -27,6 +27,8 @@ import com.chuankangkk.wrenchlift.data.TorquePointEntity
 import com.chuankangkk.wrenchlift.data.WrenchDatabase
 import com.chuankangkk.wrenchlift.measurement.export.ProcessRow
 import com.chuankangkk.wrenchlift.measurement.export.SessionWorkbookWriter
+import com.chuankangkk.wrenchlift.measurement.export.FrameEventRow
+import com.chuankangkk.wrenchlift.data.FrameEventEntity
 import com.chuankangkk.wrenchlift.measurement.export.WorkbookSummary
 import com.chuankangkk.wrenchlift.protocol.AckDecoder
 import com.chuankangkk.wrenchlift.protocol.WifiWrenchParameterSettings
@@ -52,6 +54,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collectLatest
 import java.io.Writer
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -114,7 +117,14 @@ class MeasurementViewModel @JvmOverloads constructor(
     private val measurementMutex = Mutex()
     private val historyLimit = MutableStateFlow(20)
 
+    /** 通信记录按到达顺序串行入库；会话建好之前的几帧先暂存，建好后补记到该会话。 */
+    private val frameLog = Channel<FrameEventEntity>(Channel.UNLIMITED)
+    private val pendingFrames = ArrayDeque<FrameEventEntity>()
+
     init {
+        viewModelScope.launch {
+            for (event in frameLog) runCatching { repository.saveFrameEvents(listOf(event)) }
+        }
         attachPackets(connection)
         viewModelScope.launch {
             historyLimit.collectLatest { limit ->
@@ -426,8 +436,12 @@ class MeasurementViewModel @JvmOverloads constructor(
         if (!handshake) {
             // TCP 能连但还没回话：补发一次心跳和查 SN，首帧到达时 handlePacket 会确认握手。
             runCatching {
-                newConnection.send(WrenchPacketBuilder.heartbeat())
-                newConnection.send(WrenchPacketBuilder.querySn())
+                val heartbeat = WrenchPacketBuilder.heartbeat()
+                val querySn = WrenchPacketBuilder.querySn()
+                newConnection.send(heartbeat)
+                logFrame("发", heartbeat, "连接保活（TCP 已通、等待首帧）")
+                newConnection.send(querySn)
+                logFrame("发", querySn, "查询设备 SN")
             }
         }
         appendLog(if (handshake) "已连上扳手（$endpoint）" else "已接通 $endpoint，等待扳手回话")
@@ -487,6 +501,7 @@ class MeasurementViewModel @JvmOverloads constructor(
             var stopSent = false
             if (stopWrenchFirst && _state.value.connectionState.isOnline) {
                 stopSent = runCatching { connection.send(WrenchPacketBuilder.stop()) }.isSuccess
+                logFrame("发", WrenchPacketBuilder.stop(), if (stopSent) "结束前停止扳手" else "结束前停止扳手 · 发送失败")
                 if (stopSent) {
                     _state.update { it.copy(motion = MotionCommand.STOPPED, lastCommandLabel = "停止扳手", lastSentHex = WrenchPacketBuilder.stop().rawHex()) }
                     appendLog("结束前已发送停止扳手")
@@ -560,6 +575,7 @@ class MeasurementViewModel @JvmOverloads constructor(
             if (current.motion == MotionCommand.FORWARD || current.motion == MotionCommand.REVERSE) {
                 val stop = WrenchPacketBuilder.stop()
                 if (runCatching { connection.send(stop) }.isSuccess) {
+                    logFrame("发", stop, "关远程前停止扳手")
                     _state.update { it.copy(motion = MotionCommand.STOPPED, lastCommandLabel = LABEL_STOP, lastSentHex = stop.rawHex()) }
                     appendLog("关远程前已发送停止")
                 }
@@ -759,6 +775,7 @@ class MeasurementViewModel @JvmOverloads constructor(
             val throughId = repository.lastPointId(id) ?: 0L
             Triple(record, throughId, if (throughId > 0) repository.countPointsThrough(id, throughId) else 0L)
         }
+        val eventsThrough = repository.lastFrameEventId(id) ?: 0L
         require(throughId > 0 || record.actualTorqueNm != null) { "记录尚无测量数据" }
         val summary = WorkbookSummary(
             recordId = record.id, deviceSn = record.deviceSn,
@@ -768,12 +785,26 @@ class MeasurementViewModel @JvmOverloads constructor(
             torqueLowerNm = record.torqueLowerNm, torqueUpperNm = record.torqueUpperNm,
             angleLowerDeg = record.angleLowerDeg, angleUpperDeg = record.angleUpperDeg,
             appVersion = BuildConfig.VERSION_NAME,
+            resultRawHex = record.wrenchResultRawHex,
         )
         val fileName = MeasurementCsvExporter.recordFileName(record.id, record.startTime, "xlsx")
         val target = openExportTarget(fileName, ExportOutcome.XLSX_MIME)
         try {
             target.output.use { output ->
-                SessionWorkbookWriter.write(output, summary, total) { emit ->
+                val frameEvents: suspend (suspend (FrameEventRow) -> Unit) -> Unit = { emit ->
+                    var cursor = 0L
+                    var index = 0L
+                    while (cursor < eventsThrough) {
+                        val page = repository.frameEventsPage(id, cursor, eventsThrough)
+                        if (page.isEmpty()) break
+                        for (event in page) {
+                            index += 1
+                            emit(FrameEventRow(index, event.timestampMillis, event.direction, event.functionCode, event.summary, event.rawHex))
+                        }
+                        cursor = page.last().id
+                    }
+                }
+                SessionWorkbookWriter.write(output, summary, total, frameEvents) { emit ->
                     var cursor = 0L
                     var index = 0L
                     while (cursor < throughId) {
@@ -1026,6 +1057,7 @@ class MeasurementViewModel @JvmOverloads constructor(
             runCatching {
                 connection.send(packet)
             }.onSuccess {
+                logFrame("发", packet, label)
                 _state.update {
                     val updated = it.copy(
                         lastCommandLabel = label,
@@ -1035,6 +1067,7 @@ class MeasurementViewModel @JvmOverloads constructor(
                 }
                 appendLog("$label 已发送：${packet.rawHex()}")
             }.onFailure { throwable ->
+                logFrame("发", packet, "$label · 发送失败：${throwable.message ?: "未知错误"}")
                 if (label == LABEL_PARAMS) {
                     _state.update { it.copy(parameterStatus = "参数发送失败：${throwable.message ?: "未知错误"}") }
                 }
@@ -1122,7 +1155,9 @@ class MeasurementViewModel @JvmOverloads constructor(
                     val resultAck = if (packet.functionCode == WrenchPacket.FUNC_RESULT &&
                         runCatching { ResultFrameDecoder.decode(packet) }.isSuccess
                     ) {
-                        runCatching { target.send(WrenchPacketBuilder.resultAck()) }
+                        runCatching { target.send(WrenchPacketBuilder.resultAck()) }.also { ack ->
+                            logFrame("发", WrenchPacketBuilder.resultAck(), if (ack.isSuccess) "结果确认 0x17（校验通过即回）" else "结果确认 0x17 · 发送失败")
+                        }
                     } else {
                         null
                     }
@@ -1178,14 +1213,18 @@ class MeasurementViewModel @JvmOverloads constructor(
                         controlMessage = if (rejected && lastControl.isNotBlank()) "扳手没有接受：$lastControl" else it.controlMessage,
                     )
                 }
+                logFrame("收", packet, (if (ack.isAck) "ACK " else "NAK ") + ack.label + (if (recent) "（3 s 内操作：$lastControl）" else "（3 s 内无操作，不归属）"))
                 appendLog("收到设备应答：${ack.label}")
             }
             WrenchPacket.FUNC_TORQUE_ANGLE -> handleTorqueAngle(packet, now)
             WrenchPacket.FUNC_RESULT -> handleResult(packet, now, resultAck)
             WrenchPacket.FUNC_TIME_REQUEST -> {
+                logFrame("收", packet, "扳手请求对时 0x21")
+                val sync = WrenchPacketBuilder.timeSync()
                 runCatching {
-                    connection.send(WrenchPacketBuilder.timeSync())
+                    connection.send(sync)
                 }.onSuccess {
+                    logFrame("发", sync, "回复对时 0x22")
                     _state.update { it.copy(lastProtocolSummary = "扳手请求校时，已自动回复") }
                     appendLog("扳手请求时间校准，已自动回复")
                 }.onFailure { throwable ->
@@ -1202,6 +1241,7 @@ class MeasurementViewModel @JvmOverloads constructor(
                         lastProtocolSummary = "设备 SN ${sn.sn}",
                     )
                 }
+                logFrame("收", packet, "设备 SN ${sn.sn}")
                 appendLog("收到设备编号：${sn.sn}")
                 sessionId?.let { repository.updateDeviceSn(it, sn.sn) }
             }
@@ -1213,6 +1253,7 @@ class MeasurementViewModel @JvmOverloads constructor(
                             lastProtocolSummary = "电量 $percent%",
                         )
                     }
+                    logFrame("收", packet, "电量 $percent%")
                     appendLog("收到电池电量 $percent%")
                 }
             }
@@ -1225,21 +1266,31 @@ class MeasurementViewModel @JvmOverloads constructor(
                         deviceReverseDirection = status.reverseDirection ?: it.deviceReverseDirection,
                     )
                 }
+                logFrame(
+                    "收", packet,
+                    "错误码 ${status.errorCode ?: "--"} · 控制位 ${status.controlBits?.let { "0x%04X".format(it) } ?: "--"}" +
+                        (status.reverseDirection?.let { if (it) " · Bit1=1（反向，位序待真机确认）" else " · Bit1=0（正向）" } ?: ""),
+                )
                 appendLog("收到设备状态：${status.summary}")
             }
             WrenchPacket.FUNC_NUT_RESET -> {
                 val nutReset = NutResetDecoder.decode(packet)
                 _state.update { it.copy(lastProtocolSummary = nutReset.label) }
+                logFrame("收", packet, nutReset.label)
                 appendLog("收到螺母计数：${nutReset.label}")
             }
             WrenchPacket.FUNC_GPS -> {
                 val gps = GpsDecoder.decode(packet)
                 val summary = if (gps.valid) "GPS 有效 ${gps.text}" else "GPS 无效 ${gps.text}"
                 _state.update { it.copy(lastProtocolSummary = summary) }
+                logFrame("收", packet, summary)
                 appendLog("收到位置数据：$summary")
             }
             WrenchPacket.FUNC_PULSE_RESULT -> handlePulseResult(packet, now)
-            else -> appendLog("收到未识别设备数据，原始内容已保存")
+            else -> {
+                logFrame("收", packet, "未识别功能码，原始 HEX 已保存")
+                appendLog("收到未识别设备数据，原始内容已保存")
+            }
         }
     }
 
@@ -1311,8 +1362,15 @@ class MeasurementViewModel @JvmOverloads constructor(
 
     private suspend fun handleResult(packet: WrenchPacket, now: Long, preAck: Result<Unit>?) {
         val result = ResultFrameDecoder.decode(packet)
+        logFrame(
+            "收", packet,
+            "结果 ${result.status.label}（状态 ${"0x%02X".format(result.status.code ?: 0)}）· ${result.modeText} · " +
+                "${result.torqueField2Name} ${result.actualTorqueNm.formatLog()} N·m",
+        )
         val ackResult = preAck ?: runCatching {
             connection.send(WrenchPacketBuilder.resultAck())
+        }.also { ack ->
+            logFrame("发", WrenchPacketBuilder.resultAck(), if (ack.isSuccess) "结果确认 0x17" else "结果确认 0x17 · 发送失败")
         }
         val activeSessionId = sessionId ?: ensureSession(connectionMode)
         recordResultMeasurementPoint(
@@ -1335,7 +1393,8 @@ class MeasurementViewModel @JvmOverloads constructor(
                 lastResult = result,
                 motion = if (it.motion == MotionCommand.FORWARD || it.motion == MotionCommand.REVERSE) MotionCommand.STOPPED else it.motion,
                 controlMessage = "本次运行结束：${result.status.label}",
-                lastProtocolSummary = "扳手设置已同步：目标扭矩 ${result.targetTorqueNm.formatLog()} Nm，实际扭矩 ${result.actualTorqueNm.formatLog()} Nm",
+                lastProtocolSummary = "扳手结果（${result.modeText}）：${result.torqueField1Name} ${result.targetTorqueNm.formatLog()} Nm，" +
+                    "${result.torqueField2Name} ${result.actualTorqueNm.formatLog()} Nm",
             ).withSyncedResultSettings(result)
         }
         persistSessionSummary(activeSessionId, result.status.label, result, pulseResult = null)
@@ -1345,14 +1404,15 @@ class MeasurementViewModel @JvmOverloads constructor(
             "确认发送失败：${ackResult.exceptionOrNull()?.message ?: "未知错误"}"
         }
         appendLog(
-            "收到最终结果：${result.status.label}；目标/实际扭矩 " +
+            "收到最终结果：${result.status.label}（${result.modeText}）；${result.torqueField1Name}/${result.torqueField2Name} " +
                 "${result.targetTorqueNm.formatLog()}/${result.actualTorqueNm.formatLog()} Nm；" +
-                "目标/实际角度 ${result.targetAngleDeg.formatLog()}/${result.actualAngleDeg.formatLog()}°；$ackText",
+                "${result.angleField1Name}/${result.angleField2Name} ${result.targetAngleDeg.formatLog()}/${result.actualAngleDeg.formatLog()}°；$ackText",
         )
     }
 
     private suspend fun handlePulseResult(packet: WrenchPacket, now: Long) {
         val result = PulseResultFrameDecoder.decode(packet)
+        logFrame("收", packet, "脉冲类结果 ${result.status.label} · ${result.modeText} · 实际扭矩 ${result.actualTorqueNm.formatLog()} N·m")
         val activeSessionId = sessionId ?: ensureSession(connectionMode)
         recordResultMeasurementPoint(
             activeSessionId = activeSessionId,
@@ -1498,7 +1558,29 @@ class MeasurementViewModel @JvmOverloads constructor(
             connectionMode = mode,
         )
         sessionId = id
+        synchronized(pendingFrames) {
+            pendingFrames.forEach { frameLog.trySend(it.copy(sessionId = id)) }
+            pendingFrames.clear()
+        }
         return id
+    }
+
+    /** 记一条通信记录（0x12 逐点已在过程数据里，不记）。 */
+    private fun logFrame(direction: String, packet: WrenchPacket, summary: String) {
+        if (packet.functionCode == WrenchPacket.FUNC_TORQUE_ANGLE) return
+        val id = sessionId
+        val event = FrameEventEntity(
+            sessionId = id ?: 0L, timestampMillis = System.currentTimeMillis(), direction = direction,
+            functionCode = packet.functionCode, summary = summary, rawHex = packet.rawHex(),
+        )
+        if (id != null) {
+            frameLog.trySend(event)
+        } else {
+            synchronized(pendingFrames) {
+                pendingFrames.addLast(event)
+                while (pendingFrames.size > MAX_PENDING_FRAMES) pendingFrames.removeFirst()
+            }
+        }
     }
 
     private fun appendLog(message: String) {
@@ -1548,6 +1630,8 @@ class MeasurementViewModel @JvmOverloads constructor(
         const val LABEL_PARAMS = "写入扳手参数"
         /** 0x06 应答只算到这段时间内发出的操作上。 */
         const val NAK_ATTRIBUTION_MILLIS = 3_000L
+        /** 会话建好之前最多暂存这么多条通信记录。 */
+        const val MAX_PENDING_FRAMES = 64
     }
 }
 
@@ -1597,14 +1681,15 @@ private fun WifiWrenchParameterSettings.modeLabel(): String =
     if (mode == WifiWrenchParameterSettings.MODE_M1) "M1 定扭矩" else "M2 角度控制"
 
 private fun MeasurementState.withSyncedResultSettings(result: ResultFrame): MeasurementState {
-    val targetTorque = result.targetTorqueNm?.roundToInt()?.toString() ?: parameterTargetTorque
+    // M2 的 28-29 是「预设扭矩实际值」（实测），不是设定值：不能回填到参数的目标扭矩里。
+    val targetTorque = result.settingTorqueNm?.roundToInt()?.toString() ?: parameterTargetTorque
     val targetAngle = result.targetAngleDeg?.formatInput() ?: parameterTargetAngle
     val torqueUpper = result.torqueUpperNm?.roundToInt()?.toString() ?: parameterTorqueUpper
     val torqueLower = result.torqueLowerNm?.roundToInt()?.toString() ?: parameterTorqueLower
     val angleUpper = result.angleUpperDeg?.formatInput() ?: parameterAngleUpper
     val angleLower = result.angleLowerDeg?.formatInput() ?: parameterAngleLower
     val hasAnySetting =
-        result.targetTorqueNm != null ||
+        result.settingTorqueNm != null ||
             result.targetAngleDeg != null ||
             result.torqueUpperNm != null ||
             result.torqueLowerNm != null ||

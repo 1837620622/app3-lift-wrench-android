@@ -8,8 +8,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [MeasurementEntity::class, TorquePointEntity::class],
-    version = 3,
+    entities = [MeasurementEntity::class, TorquePointEntity::class, FrameEventEntity::class],
+    version = 4,
     exportSchema = false,
 )
 abstract class WrenchDatabase : RoomDatabase() {
@@ -26,10 +26,22 @@ abstract class WrenchDatabase : RoomDatabase() {
                     WrenchDatabase::class.java,
                     "wrench_lift.sqlite",
                 )
-                    .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }
+
+        /** 第 4 版：新增通信记录表（只增表，不动已有数据）。 */
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `frame_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, " +
+                        "`timestampMillis` INTEGER NOT NULL, `direction` TEXT NOT NULL, `functionCode` INTEGER, `summary` TEXT NOT NULL, " +
+                        "`rawHex` TEXT NOT NULL, FOREIGN KEY(`sessionId`) REFERENCES `measurement_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_frame_events_sessionId` ON `frame_events` (`sessionId`)")
+            }
+        }
 
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {

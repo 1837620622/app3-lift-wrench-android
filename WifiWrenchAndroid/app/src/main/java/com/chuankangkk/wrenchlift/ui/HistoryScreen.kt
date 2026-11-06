@@ -97,11 +97,12 @@ private fun EvidenceBlock(state: MeasurementState) {
 private fun WrenchResultEvidence(state: MeasurementState) {
     val result = state.lastResult ?: return
     EvidenceLine("扳手结果", result.status.label)
-    EvidenceLine("目标/实际扭矩", "${result.targetTorqueNm.formatEvidence()} / ${result.actualTorqueNm.formatEvidence()} Nm")
-    EvidenceLine("目标/实际角度", "${result.targetAngleDeg.formatEvidence()} / ${result.actualAngleDeg.formatEvidence()} °")
-    EvidenceLine("扭矩上下限", "${result.torqueLowerNm.formatEvidence()} - ${result.torqueUpperNm.formatEvidence()} Nm")
-    EvidenceLine("角度上下限", "${result.angleLowerDeg.formatEvidence()} - ${result.angleUpperDeg.formatEvidence()} °")
-    EvidenceLine("目标顶升力", if (result.targetTorqueNm == null) "--" else "待标定后由目标扭矩换算")
+    EvidenceLine("参数模式", result.modeText)
+    EvidenceLine("${result.torqueField1Name}/${result.torqueField2Name}", "${result.targetTorqueNm.formatEvidence()} / ${result.actualTorqueNm.formatEvidence()} Nm")
+    EvidenceLine("${result.angleField1Name}/${result.angleField2Name}", "${result.targetAngleDeg.formatEvidence()} / ${result.actualAngleDeg.formatEvidence()} °")
+    EvidenceLine("${result.torqueLimitName}上下限", "${result.torqueLowerNm.formatEvidence()} - ${result.torqueUpperNm.formatEvidence()} Nm")
+    EvidenceLine("${result.angleLimitName}上下限", "${result.angleLowerDeg.formatEvidence()} - ${result.angleUpperDeg.formatEvidence()} °")
+    EvidenceLine("目标顶升力", if (result.settingTorqueNm == null) "--" else "待标定后由目标扭矩换算")
 }
 
 @Composable

@@ -149,6 +149,9 @@ object MeasurementCsvExporter {
         WarningLevel.ERROR -> "危险"
     }
 
+    /** 功能码的中文类型名（导出「帧类型」「通信记录」共用）。 */
+    fun functionLabel(code: Int): String = code.exportFunctionLabel()
+
     private fun Int.exportFunctionLabel(): String = when (this) {
         WrenchPacket.FUNC_STOP_RUN -> "扳手动作"
         WrenchPacket.FUNC_STATUS -> "设备状态"
