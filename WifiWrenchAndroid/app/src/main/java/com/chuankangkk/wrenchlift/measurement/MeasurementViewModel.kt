@@ -110,6 +110,9 @@ class MeasurementViewModel @JvmOverloads constructor(
     private var retryJob: Job? = null
     private var retryCount = 0
     private var sessionId: Long? = null
+    /** 用户点了「结束会话」：之后的连接要新开记录；断线自动重连不算结束，续用当前记录。 */
+    private var sessionEnded = false
+    private var endJob: Job? = null
     private var connectionMode: String = "未连接"
     private var lastControl: String = ""
     private var lastControlAtMillis: Long = 0L
@@ -212,6 +215,11 @@ class MeasurementViewModel @JvmOverloads constructor(
             when (current.wrenchModel) {
                 WrenchModel.PULSE_RC283F -> WrenchPacketBuilder.pulseParameterSetRc283f(
                     com.chuankangkk.wrenchlift.protocol.Rc283fPulseSettings(
+                        productId = "",
+                        stationName = "",
+                        employeeId = knownEmployeeId(current),
+                        toolSerial = "",
+                        boltModel = "",
                         mode = draft.mode,
                         targetTorqueNm = draft.targetTorque.toDoubleOrNull() ?: throw IllegalArgumentException("请填写目标扭矩"),
                         k1 = if (draft.mode == 0) 0 else draft.k1.toIntOrNull().need("K1"),
@@ -224,6 +232,11 @@ class MeasurementViewModel @JvmOverloads constructor(
                 )
                 WrenchModel.PULSE_RCH -> WrenchPacketBuilder.pulseParameterSetRch(
                     com.chuankangkk.wrenchlift.protocol.RchPulseSettings(
+                        productId = "",
+                        stationName = "",
+                        employeeId = knownEmployeeId(current),
+                        toolSerial = "",
+                        boltModel = "",
                         mode = draft.mode,
                         presetIndex = draft.presetIndex.toIntOrNull() ?: 1,
                         k1 = if (draft.mode == 3) draft.k1.toIntOrNull().need("K1") else 0,
@@ -330,14 +343,18 @@ class MeasurementViewModel @JvmOverloads constructor(
         }
         connectJob = viewModelScope.launch {
             try {
+                // 等上一次「结束会话」完整收尾（断开旧连接、写入摘要）之后再连，避免两边互相断开对方的新连接。
+                endJob?.join()
                 measurementMutex.withLock {
-                    // 每次重新连接单独建会话，避免更换扳手或测点后混入上一台的数据。
                     stateJob?.cancel()
                     packetJob?.cancelAndJoin()
-                    val old = _state.value
-                    sessionId?.let { persistSessionSummary(it, old.lastResult?.status?.label ?: "采集结束", old.lastResult, old.lastPulseResult) }
-                    sessionId = null
-                    _state.value = old.freshSessionState()
+                    if (sessionEnded) {
+                        // 用户已结束上一条记录：这次连接是新的一条记录，曲线与读数从头开始。
+                        sessionId = null
+                        sessionEnded = false
+                        _state.value = _state.value.freshSessionState()
+                    }
+                    // 否则是断线重连 / Wi‑Fi 恢复 / 手动连接：续用当前记录，曲线保留，断线段在图上标为「数据间断」。
                 }
                 runCatching { connection.disconnect() }
                 val outcome = probeEndpoints(manual)
@@ -477,7 +494,8 @@ class MeasurementViewModel @JvmOverloads constructor(
             measurementMutex.withLock {
                 sessionId?.let { id ->
                     val latest = _state.value
-                    persistSessionSummary(id, latest.lastResult?.status?.label ?: "采集结束", latest.lastResult, latest.lastPulseResult)
+                    // 断线不等于结束：记录仍可续用，状态保持「采集中」，直到用户结束会话。
+                    persistSessionSummary(id, latest.lastResult?.status?.label ?: "采集中", latest.lastResult, latest.lastPulseResult)
                 }
             }
         }
@@ -497,7 +515,11 @@ class MeasurementViewModel @JvmOverloads constructor(
 
     /** 结束会话：只断开本机会话与采集，不会自动停止扳手（SAFE-05）。可选先发 0x01 停止。 */
     fun endSession(stopWrenchFirst: Boolean = false) {
-        viewModelScope.launch {
+        // 只结束「点结束时」已经存在的连接任务；结束期间若用户又点了连接，新任务不能被这里取消。
+        val connectAtEnd = connectJob
+        retryJob?.cancel()
+        _state.update { it.copy(autoConnect = false) }
+        endJob = viewModelScope.launch {
             var stopSent = false
             if (stopWrenchFirst && _state.value.connectionState.isOnline) {
                 stopSent = runCatching { connection.send(WrenchPacketBuilder.stop()) }.isSuccess
@@ -508,22 +530,27 @@ class MeasurementViewModel @JvmOverloads constructor(
                     delay(150)
                 }
             }
-            retryJob?.cancel()
-            _state.update { it.copy(autoConnect = false, linkPhase = LinkPhase.IDLE) }
-            connectJob?.cancelAndJoin()
+            connectAtEnd?.cancelAndJoin()
             connection.disconnect()
             measurementMutex.withLock {
                 sessionId?.let { id ->
                     val current = _state.value
                     persistSessionSummary(id, current.lastResult?.status?.label ?: "采集结束", current.lastResult, current.lastPulseResult)
                 }
+                sessionEnded = sessionId != null
             }
             _state.update {
-                it.copy(
-                    linkPhase = LinkPhase.IDLE,
-                    remoteEnabled = false,
-                    controlMessage = if (stopSent) "已发送停止，并结束会话" else "会话已结束（扳手不会因此自动停止）",
-                )
+                // 结束期间如果用户已经又点了连接，不覆盖新连接的状态（以底层连接的实时状态为准，不用可能滞后的 UI 副本）。
+                val reconnecting = connectJob?.isActive == true || connection.connectionState.value is ConnectionState.Connected
+                if (reconnecting) {
+                    it
+                } else {
+                    it.copy(
+                        linkPhase = LinkPhase.IDLE,
+                        remoteEnabled = false,
+                        controlMessage = if (stopSent) "已发送停止，并结束会话" else "会话已结束（扳手不会因此自动停止）",
+                    )
+                }
             }
             appendLog("会话已结束")
         }
@@ -714,6 +741,7 @@ class MeasurementViewModel @JvmOverloads constructor(
             measurementMutex.withLock {
                 packetJob?.cancelAndJoin()
                 sessionId = null
+                sessionEnded = false
                 val old = _state.value
                 _state.value = old.freshSessionState().copy(
                     connectionState = old.connectionState,
@@ -1077,6 +1105,10 @@ class MeasurementViewModel @JvmOverloads constructor(
         }
     }
 
+    /** 扳手上一次回传的员工号（0x12 / 0x15）；未知时返回空串，不编造。 */
+    private fun knownEmployeeId(state: MeasurementState): String =
+        state.employeeId.takeIf { it.isNotBlank() && it != "--" } ?: ""
+
     private fun buildParameterSettings(): WifiWrenchParameterSettings? {
         val current = _state.value
         val targetTorque = current.parameterTargetTorque.toIntOrNull()
@@ -1103,6 +1135,12 @@ class MeasurementViewModel @JvmOverloads constructor(
         }
         return runCatching {
             WifiWrenchParameterSettings(
+                // 不写入编造的标识：员工号只沿用扳手上一次回传的值，其余标识留空（全零）。
+                productId = "",
+                stationName = "",
+                employeeId = knownEmployeeId(current),
+                toolSerial = "",
+                controllerSerial = "",
                 mode = current.parameterMode,
                 targetTorqueNm = targetTorque,
                 torqueLowerNm = torqueLower,
@@ -1234,6 +1272,23 @@ class MeasurementViewModel @JvmOverloads constructor(
             }
             WrenchPacket.FUNC_REPLY_SN -> {
                 val sn = DeviceSnDecoder.decode(packet)
+                val known = _state.value.deviceSn.takeIf { it.isNotBlank() && it != "未知设备" && it != "--" }
+                if (known != null && known != sn.sn && sessionId != null) {
+                    // 换了一台扳手：上一台的记录收尾，新记录只含这台扳手的数据。
+                    sessionId?.let { id -> persistSessionSummary(id, _state.value.lastResult?.status?.label ?: "采集结束", _state.value.lastResult, _state.value.lastPulseResult) }
+                    sessionId = null
+                    sessionEnded = false
+                    _state.update { old ->
+                        old.freshSessionState().copy(
+                            connectionState = old.connectionState,
+                            linkPhase = old.linkPhase,
+                            deviceSn = sn.sn,
+                            session = old.session.copy(deviceSn = sn.sn),
+                            lastProtocolSummary = "换了扳手（SN ${sn.sn}），已开始新记录",
+                        )
+                    }
+                    appendLog("检测到换了扳手（SN $known → ${sn.sn}），已开新记录")
+                }
                 _state.update {
                     it.copy(
                         deviceSn = sn.sn,
@@ -1302,8 +1357,10 @@ class MeasurementViewModel @JvmOverloads constructor(
         val historyBefore = _state.value.recentPoints.map { it.sourcePoint }.toMutableList()
         var latestCalculation: ForceCalculationResult? = null
         val entities = ArrayList<TorquePointEntity>(decoded.points.size)
+        // 本帧第一个点的记录序号：入库前的记录点数 + 1（互斥锁内，计数稳定；结果帧也计入点数，与导出一致）。
+        val seqBase = _state.value.persistedPointCount
 
-        decoded.points.forEach { point ->
+        decoded.points.forEachIndexed { index, point ->
             val result = calculator.calculate(point, historyBefore)
             val displacementMm = 0.0
             val measuredPoint = MeasuredPoint(
@@ -1314,6 +1371,7 @@ class MeasurementViewModel @JvmOverloads constructor(
                 displacementMm = displacementMm,
                 warningLevel = result.warningLevel,
                 rawHex = decoded.rawHex,
+                seq = seqBase + index + 1,
             )
             latestCalculation = result
             historyBefore += point

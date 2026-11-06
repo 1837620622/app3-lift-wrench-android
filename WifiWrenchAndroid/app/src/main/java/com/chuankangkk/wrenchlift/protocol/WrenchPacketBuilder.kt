@@ -161,7 +161,9 @@ object WrenchPacketBuilder {
 
 private fun writeAscii(target: ByteArray, offset: Int, length: Int, value: String) {
     val bytes = value.encodeToByteArray()
-    val count = minOf(length, bytes.size)
+    var count = minOf(length, bytes.size)
+    // 超长时不把多字节字符（UTF-8 续字节 10xxxxxx）截成半个，向前退到字符边界。
+    if (count < bytes.size) while (count > 0 && (bytes[count].toInt() and 0xC0) == 0x80) count--
     bytes.copyInto(target, destinationOffset = offset, startIndex = 0, endIndex = count)
 }
 

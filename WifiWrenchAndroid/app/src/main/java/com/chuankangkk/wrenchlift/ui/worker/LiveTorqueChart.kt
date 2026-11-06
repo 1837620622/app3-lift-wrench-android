@@ -94,8 +94,19 @@ object ChartAxis {
         return Ticks(start, end, nice, values)
     }
 
-    fun label(value: Double, step: Double): String =
-        if (step >= 1.0 || abs(step - Math.rint(step)) < 1e-9) "%.0f".format(Locale.US, value) else "%.1f".format(Locale.US, value)
+    fun label(value: Double, step: Double): String = "%.${decimalsFor(step)}f".format(Locale.US, value)
+
+    /**
+     * 步长需要几位小数：1/2/5×10ⁿ 为 max(0, −n)，2.5×10ⁿ 多一位（0.25 需要两位，2.5 需要一位）。
+     * 旧实现把所有非整数步长都写成一位小数，斜率轴步长 0.25 时 0.25 会标成 0.3（Java 半数进位），0.75 标成 0.8。
+     */
+    internal fun decimalsFor(step: Double): Int {
+        if (!(step > 0.0) || !step.isFinite()) return 0
+        val exp = floor(log10(step) + 1e-9).toInt()
+        val mantissa = step / 10.0.pow(exp)
+        val halfStep = abs(mantissa - 2.5) < 1e-6
+        return max(0, -exp + if (halfStep) 1 else 0)
+    }
 }
 
 /**

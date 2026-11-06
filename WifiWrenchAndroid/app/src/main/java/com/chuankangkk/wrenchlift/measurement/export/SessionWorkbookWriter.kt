@@ -1193,7 +1193,7 @@ object SessionWorkbookWriter {
             line("扳手 SN", text(summary.deviceSn.takeIf { it.isNotBlank() && it != "未知设备" } ?: "--"))
             line("开始时间", dateTime(summary.startTimeMillis))
             line("结束时间", summary.endTimeMillis?.let { dateTime(it) } ?: text("未结束"))
-            line("过程点数（全量）", num(totalPoints))
+            line("记录点数（含结果帧）", num(totalPoints))
             line("运行段数", num(stats.runs))
             line("首末点间隔 s", num(stats.durationSeconds))
 
@@ -1260,7 +1260,7 @@ object SessionWorkbookWriter {
 
         companion object {
             val NOTES = listOf(
-                "「过程数据」为本记录全部过程点，未截断；另带运行段、帧号、帧内序号、段内时间/转角增量、相对有效加载起点转角、帧间转速、接收间隔、工况、事件等派生列。",
+                "「过程数据」为本记录全部数据点（0x12 过程点与 0x15/0x55 结果帧），未截断；另带运行段、帧号、帧内序号、段内时间/转角增量、相对有效加载起点转角、帧间转速、接收间隔、工况、事件等派生列。",
                 "接收时间为手机接收时间（毫秒），同一帧的多个点共用；0x12 帧约每秒一帧，帧内各点没有单独时间。",
                 "图表、统计、转折候选、工况只用 0x12 过程帧；0x15/0x55 结果帧逐字段见「结果帧」，收发的其余帧见「通信记录」。",
                 "转折候选为两段直线拟合的斜率变化位置，未经实测验证，不是平衡点结论；逐段汇总见「运行段」，计算过程见「拟合明细」「候选扫描」。",

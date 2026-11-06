@@ -143,8 +143,8 @@ class SessionWorkbookWriterTest {
             assertEquals(SessionWorkbookWriter.formatTime(points.first().receivedAtMillis).substring(0, 19), shown.substring(0, 19))
             val summary = book.getSheet("概要")
             val labels = (0..summary.lastRowNum).mapNotNull { summary.getRow(it)?.getCell(0)?.stringCellValue }
-            assertTrue(labels.contains("过程点数（全量）"))
-            val countRow = (0..summary.lastRowNum).first { summary.getRow(it)?.getCell(0)?.stringCellValue == "过程点数（全量）" }
+            assertTrue(labels.contains("记录点数（含结果帧）"))
+            val countRow = (0..summary.lastRowNum).first { summary.getRow(it)?.getCell(0)?.stringCellValue == "记录点数（含结果帧）" }
             assertEquals(3_000.0, summary.getRow(countRow).getCell(1).numericCellValue, 0.0)
             assertTrue(labels.contains("未标定：不含顶升力等正式力值。"))
             // 单台扳手：不出现板号/测点，也不在导出里署名。

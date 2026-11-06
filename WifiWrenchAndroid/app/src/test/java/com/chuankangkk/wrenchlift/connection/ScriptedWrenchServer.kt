@@ -20,6 +20,8 @@ class ScriptedWrenchServer(private val replies: Boolean = true) : AutoCloseable 
     val received = CopyOnWriteArrayList<WrenchPacket>()
     val accepted = java.util.concurrent.atomic.AtomicInteger()
     @Volatile private var client: Socket? = null
+    /** 查 SN 时回复的 5 字节压缩 BCD；测试里改它可模拟「换了一台扳手」。 */
+    @Volatile var snPayload: ByteArray = byteArrayOf(0x20, 0x26, 0x11, 0x05, 0x01)
 
     init {
         thread(isDaemon = true, name = "scripted-wrench-$port") {
@@ -46,7 +48,7 @@ class ScriptedWrenchServer(private val replies: Boolean = true) : AutoCloseable 
                 parser.append(buffer.copyOfRange(0, count)).forEach { packet ->
                     received += packet
                     if (replies && packet.functionCode == WrenchPacket.FUNC_QUERY_SN) {
-                        send(WrenchPacketBuilder.build(WrenchPacket.FUNC_REPLY_SN, byteArrayOf(0x20, 0x26, 0x11, 0x05, 0x01)))
+                        send(WrenchPacketBuilder.build(WrenchPacket.FUNC_REPLY_SN, snPayload))
                     }
                 }
             }
@@ -67,6 +69,11 @@ class ScriptedWrenchServer(private val replies: Boolean = true) : AutoCloseable 
     }
 
     fun functionCodes(): List<Int> = received.map { it.functionCode }
+
+    /** 只断开当前客户端（模拟 Wi‑Fi 抖动）；服务端仍在监听，App 重连时会再次 accept。 */
+    fun dropClient() {
+        runCatching { client?.close() }
+    }
 
     override fun close() {
         runCatching { client?.close() }
