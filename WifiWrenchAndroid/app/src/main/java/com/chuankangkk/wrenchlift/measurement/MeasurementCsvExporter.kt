@@ -17,6 +17,10 @@ object MeasurementCsvExporter {
         return "WifiWrench_${slab}_${point}_${fileTimeFormat.format(Date(nowMillis))}.csv"
     }
 
+    /** 记录导出文件名：只有一台扳手，按记录号 + 开始时间命名，如 `WifiWrench_R12_20261104_234612.xlsx`。 */
+    fun recordFileName(recordId: Long, startMillis: Long, extension: String): String =
+        "WifiWrench_R${recordId}_${synchronized(fileTimeFormat) { fileTimeFormat.format(Date(startMillis)) }}.$extension"
+
     fun buildCsv(state: MeasurementState): String {
         require(state.hasWrenchMeasurementData()) {
             "没有真实扳手测量数据，不能导出 CSV"

@@ -46,12 +46,20 @@ object TorqueAngleWindow {
         return result
     }
 
-    fun view(points: List<MeasuredPoint>, maxDrawPointsPerSegment: Int = 600): TorqueAngleView {
+    /**
+     * @param firstSeq 缓冲区第一个点在本记录里的序号（从 1 起），与导出「过程数据」的「序号」列一致。
+     */
+    fun view(points: List<MeasuredPoint>, maxDrawPointsPerSegment: Int = 600, firstSeq: Long = 1): TorqueAngleView {
         val all = segments(points)
         if (all.isEmpty()) return TorqueAngleView.EMPTY
         val kept = all.takeLast(MAX_SEGMENTS)
+        // 各段在缓冲区里是连续切片：由此算出每个点的记录内序号。
+        val keptStarts = ArrayList<Int>(kept.size)
+        var cursor = points.size - kept.sumOf { it.size }
+        kept.forEach { keptStarts += cursor; cursor += it.size }
         val latestSegment = kept.last()
-        val latest = latestSegment.last().toChartPoint()
+        val latestStart = keptStarts.last()
+        val latest = latestSegment.last().toChartPoint(firstSeq + latestStart + latestSegment.lastIndex)
 
         val angleMax = latestSegment.maxOf { it.sourcePoint.angleDeg }
         val unionMin = kept.minOf { segment -> segment.minOf { it.sourcePoint.angleDeg } }
@@ -60,9 +68,10 @@ object TorqueAngleWindow {
         val windowed = all.size > kept.size || clippedMin > unionMin || points.size >= MAX_BUFFER_POINTS
 
         val drawn = kept.mapIndexedNotNull { index, segment ->
-            val inRange = segment
-                .filter { it.sourcePoint.angleDeg >= clippedMin }
-                .map { it.toChartPoint() }
+            val start = keptStarts[index]
+            val inRange = segment.withIndex()
+                .filter { it.value.sourcePoint.angleDeg >= clippedMin }
+                .map { it.value.toChartPoint(firstSeq + start + it.index) }
             if (inRange.isEmpty()) null else ChartSegment(
                 points = decimate(inRange, maxDrawPointsPerSegment),
                 isCurrent = index == kept.lastIndex,
@@ -92,7 +101,8 @@ object TorqueAngleWindow {
             latest = latest,
             windowed = windowed,
             sampled = drawn.any { it.points.size < it.sourceCount },
-            currentPeak = latestSegment.maxBy { it.sourcePoint.torqueNm }.toChartPoint(),
+            currentPeak = latestSegment.withIndex().maxBy { it.value.sourcePoint.torqueNm }
+                .let { it.value.toChartPoint(firstSeq + latestStart + it.index) },
             currentPointCount = latestSegment.size,
         )
     }
@@ -123,14 +133,16 @@ object TorqueAngleWindow {
         return result
     }
 
-    private fun MeasuredPoint.toChartPoint() = ChartPoint(
+    private fun MeasuredPoint.toChartPoint(seq: Long) = ChartPoint(
         angle = sourcePoint.angleDeg,
         torque = sourcePoint.torqueNm,
         receivedAtMillis = sourcePoint.timestampMillis,
+        seq = seq,
     )
 }
 
-data class ChartPoint(val angle: Double, val torque: Double, val receivedAtMillis: Long)
+/** @property seq 记录内序号（从 1 起），与导出「序号」列一致。 */
+data class ChartPoint(val angle: Double, val torque: Double, val receivedAtMillis: Long, val seq: Long = 0)
 
 data class ChartSegment(
     val points: List<ChartPoint>,

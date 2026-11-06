@@ -10,6 +10,25 @@ class TorqueAngleWindowTest {
     private fun point(angle: Double, torque: Double, bolt: Int = 1, t: Long = 0L) =
         MeasuredPoint(TorqueAnglePoint(torque, angle.toInt(), angle, t), bolt, null, warningLevel = WarningLevel.WATCH, rawHex = "")
 
+    @Test fun chartPointsCarryRecordSequenceMatchingExportRows() {
+        // 缓冲区装着本记录第 1001～1080 点：两段运行（第二段转角回落），序号与导出「序号」列一致，抽样后也不变。
+        val first = List(50) { point(it * 4.0, it * 3.0, t = it * 100L) }
+        val second = List(30) { point(it * 2.0, it * 5.0 + 1, t = 6_000L + it * 100L) }
+        val view = TorqueAngleWindow.view(first + second, firstSeq = 1_001)
+        val old = view.segments.first { !it.isCurrent }.points
+        val current = view.segments.first { it.isCurrent }.points
+        assertEquals(1_001L, old.first().seq)
+        assertEquals(1_050L, old.last().seq)
+        assertEquals(1_051L, current.first().seq)
+        assertEquals(1_080L, current.last().seq)
+        assertEquals(1_080L, view.latest!!.seq)
+        assertEquals(1_080L, view.currentPeak!!.seq) // 第二段扭矩单调增，峰值是末点
+        val sampled = TorqueAngleWindow.view(List(2_000) { point(it * 0.1, (it % 97).toDouble()) }, maxDrawPointsPerSegment = 100, firstSeq = 1)
+        val pts = sampled.segments.single().points
+        assertTrue(pts.zipWithNext().all { (a, b) -> b.seq > a.seq })
+        pts.forEach { assertEquals("抽样点序号与角度对应", it.seq - 1, Math.round(it.angle * 10)) }
+    }
+
     @Test fun displayBufferIsNoLongerFiftyPointsButStaysBounded() {
         val many = List(5_000) { point(it.toDouble(), it.toDouble()) }
         val buffer = TorqueAngleWindow.append(emptyList(), many.take(120))

@@ -27,10 +27,10 @@ enum class LinkPhase {
 }
 
 /** 扳手类型：决定参数侧滑下发 0x10（定扭矩）还是 0x50 / 0x51（脉冲、离合、冲击）。默认定扭矩。 */
-enum class WrenchModel(val label: String, val functionLabel: String) {
-    TORQUE("定扭矩扳手", "0x10"),
-    PULSE_RC283F("脉冲扳手（RC283F 驱动）", "0x50"),
-    PULSE_RCH("脉冲扳手（RCH 驱动）", "0x51"),
+enum class WrenchModel(val label: String, val functionLabel: String, val shortLabel: String) {
+    TORQUE("定扭矩扳手", "0x10", "定扭矩"),
+    PULSE_RC283F("脉冲扳手（RC283F 驱动）", "0x50", "脉冲 RC283F"),
+    PULSE_RCH("脉冲扳手（RCH 驱动）", "0x51", "脉冲 RCH"),
 }
 
 /** 脉冲类参数草稿（文本输入，保存时校验）。 */
@@ -125,6 +125,20 @@ object WorkerText {
         else -> "可以转动"
     }
 
+    /** 窄控制柱 / 大字体用的短说法（意思不变，只更短）。 */
+    fun motionShort(state: MeasurementState): String = when {
+        !state.connectionState.isOnline && state.motion in setOf(MotionCommand.FORWARD, MotionCommand.REVERSE) -> "请在扳手上停止"
+        !state.connectionState.isOnline -> "未连接扳手"
+        !state.remoteEnabled -> "先开远程"
+        state.motion == MotionCommand.FORWARD -> "正转中"
+        state.motion == MotionCommand.REVERSE -> "反转中"
+        state.motion == MotionCommand.STOPPED -> "已停止"
+        else -> "可以转动"
+    }
+
+    fun deviceErrorShort(state: MeasurementState): String? =
+        state.deviceErrorCode?.takeIf { it != 0 }?.let { "报错 $it" }
+
     /** 0x05 错误码非 0 时给工人一句话；具体码值只作参考，含义以厂家为准。 */
     fun deviceError(state: MeasurementState): String? =
         state.deviceErrorCode?.takeIf { it != 0 }?.let { "扳手报错（代码 $it）" }
@@ -143,7 +157,6 @@ object WorkerText {
     }
 
     const val FRESH_SECONDS = 3L
-    const val WINDOW_NOTE = "曲线为显示窗口（按转角自适应）；完整数据见导出"
 }
 
 sealed interface Freshness {

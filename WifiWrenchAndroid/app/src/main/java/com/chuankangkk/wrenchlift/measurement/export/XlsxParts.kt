@@ -63,7 +63,9 @@ internal object Xml {
     fun number(value: Double): String? {
         if (!value.isFinite()) return null
         if (value == Math.rint(value) && kotlin.math.abs(value) < 1e15) return value.toLong().toString()
-        return BigDecimal(value).round(java.math.MathContext(12)).stripTrailingZeros().toPlainString()
+        // 15 位有效数字（Excel 的精度上限）：既去掉二进制尾差（0.1+0.2），又保住日期序列值的毫秒
+        // （45966.xxxxxxxxxx 需要 15 位；12 位只到约 9ms）。
+        return BigDecimal(value).round(java.math.MathContext(15)).stripTrailingZeros().toPlainString()
     }
 }
 

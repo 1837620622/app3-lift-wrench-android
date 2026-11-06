@@ -9,8 +9,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,6 +46,8 @@ data class WrenchPalette(
     val chartAxis: Color,
     val chartLine: Color,
     val chartLineOld: Color,
+    /** 转角曲线（转角–序号图）用蓝色，与扭矩青绿区分；与导出图同色系。 */
+    val chartAngle: Color,
     val scrim: Color,
 )
 
@@ -69,6 +74,7 @@ val LightIndustrialPalette = WrenchPalette(
     chartAxis = Color(0xFF8A96A3),
     chartLine = Color(0xFF0D9B8A),
     chartLineOld = Color(0xFFB4BEC7),
+    chartAngle = Color(0xFF3A6EA5),
     scrim = Color(0x661B1F24),
 )
 
@@ -96,6 +102,7 @@ val DarkIndustrialPalette = WrenchPalette(
     chartAxis = Color(0xFF56616C),
     chartLine = Color(0xFF2BB7A9),
     chartLineOld = Color(0xFF3B4650),
+    chartAngle = Color(0xFF6FA8DC),
     scrim = Color(0xB3000000),
 )
 
@@ -126,6 +133,12 @@ object WrenchType {
     val bodyStyle = TextStyle(fontSize = body, fontWeight = FontWeight.Normal, lineHeight = 20.sp)
     val bodyStrong = TextStyle(fontSize = body, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp)
     val captionStyle = TextStyle(fontSize = caption, fontWeight = FontWeight.Normal, lineHeight = 16.sp, fontFeatureSettings = TNUM)
+
+    /** 标签 / 辅助行（顶栏格名、读数标签、峰值、新鲜度、状态行）：统一 13sp。 */
+    val labelStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal, lineHeight = 17.sp, fontFeatureSettings = TNUM)
+
+    /** 顶栏格值：16sp 半粗、表格数字。 */
+    val valueStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp, fontFeatureSettings = TNUM)
     val buttonStyle = TextStyle(fontSize = button, fontWeight = FontWeight.Medium, lineHeight = 20.sp)
 }
 
@@ -165,7 +178,20 @@ fun WrenchWorkerTheme(dark: Boolean, content: @Composable () -> Unit) {
             outline = palette.hairline, outlineVariant = palette.hairline, surfaceContainerHigh = palette.panel,
         )
     }
-    CompositionLocalProvider(LocalWrenchPalette provides palette) {
+    val config = LocalConfiguration.current
+    val base = LocalDensity.current
+    val scale = largeScreenScale(config.screenWidthDp, config.screenHeightDp)
+    val density = if (scale == 1f) base else Density(base.density * scale, base.fontScale)
+    CompositionLocalProvider(LocalWrenchPalette provides palette, LocalDensity provides density) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
+}
+
+/**
+ * 平板（短边 ≥ 600dp）整体放大界面，按 960×450dp 的横屏工作台比例取较小倍数，最多 1.3 倍：
+ * 字号、按钮、间距一起放大，避免大屏上字小、留白大。手机（三防机 800×360 / 914×411 等）保持 1 倍。
+ */
+fun largeScreenScale(widthDp: Int, heightDp: Int): Float {
+    if (minOf(widthDp, heightDp) < 600) return 1f
+    return minOf(widthDp / 960f, heightDp / 450f).coerceIn(1f, 1.3f)
 }

@@ -9,7 +9,7 @@ import com.chuankangkk.wrenchlift.measurement.WrenchModel
 data class WorkerActions(
     val connect: () -> Unit = {},
     val endSession: (stopWrenchFirst: Boolean) -> Unit = {},
-    val startMeasurement: (slabNo: String, pointNo: String) -> Unit = { _, _ -> },
+    val startMeasurement: () -> Unit = {},
     val enableRemote: () -> Unit = {},
     val disableRemote: () -> Unit = {},
     val forward: () -> Unit = {},

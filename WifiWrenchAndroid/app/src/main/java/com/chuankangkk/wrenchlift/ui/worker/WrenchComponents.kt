@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -118,14 +119,45 @@ fun ControlButton(
             containerColor = animatedContainer, contentColor = content,
             disabledContainerColor = p.disabledFill, disabledContentColor = p.disabledText,
         ),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
         elevation = null,
     ) {
         if (icon != null) {
             LineIcon(icon, content, size = 20.dp)
             Spacer(Modifier.width(8.dp))
         }
-        Text(text, style = WrenchType.buttonStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // 窄控制柱 / 大字体：整体缩字号，不出「正…」「停止扳…」。
+        FitText(text, WrenchType.buttonStyle, minSize = 11.sp)
+    }
+}
+
+/**
+ * 单行文字：放不下就逐级缩字号（不低于 [minSize]），绝不换行、不出省略号。
+ * 中文在宽度差 1px 时会把末字挤到第二行而被 maxLines=1 吞掉，所以这里固定 softWrap=false 并按实测宽度缩。
+ */
+@Composable
+fun FitText(
+    text: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    minSize: TextUnit = 11.sp,
+) {
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(modifier) {
+        val maxPx = constraints.maxWidth
+        val bounded = constraints.hasBoundedWidth
+        val fitted = remember(text, style, maxPx, bounded) {
+            if (!bounded) return@remember style
+            var size = style.fontSize.value
+            var candidate = style
+            while (size > minSize.value && measurer.measure(text, candidate, maxLines = 1, softWrap = false).size.width > maxPx) {
+                size -= 0.5f
+                candidate = style.copy(fontSize = size.sp)
+            }
+            candidate
+        }
+        Text(text, style = fitted, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
     }
 }
 
@@ -272,13 +304,15 @@ fun WrenchTextField(
     numeric: Boolean = false,
     decimal: Boolean = false,
     placeholder: String? = null,
+    suffix: String? = null,
 ) {
     val p = palette
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label, maxLines = 1) },
+        label = { Text(label, maxLines = 1, softWrap = false) },
         placeholder = placeholder?.let { { Text(it, maxLines = 1) } },
+        suffix = suffix?.let { { Text(it, style = WrenchType.labelStyle, color = p.textSecondary, maxLines = 1, softWrap = false) } },
         singleLine = true,
         enabled = enabled,
         textStyle = WrenchType.number(16.sp, androidx.compose.ui.text.font.FontWeight.Normal).copy(color = p.textPrimary),
@@ -340,10 +374,16 @@ fun WrenchDialog(
 
 /** 次级页面顶栏：返回 + 标题 + 右侧动作。 */
 @Composable
-fun PageTopBar(title: String, onBack: (() -> Unit)?, modifier: Modifier = Modifier, actions: @Composable RowScope.() -> Unit = {}) {
+fun PageTopBar(
+    title: String,
+    onBack: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    height: Dp = WrenchDimens.topBarHeight,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
     val p = palette
     Row(
-        modifier.fillMaxWidth().heightIn(min = WrenchDimens.topBarHeight),
+        modifier.fillMaxWidth().heightIn(min = height),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) BackButton(onBack)

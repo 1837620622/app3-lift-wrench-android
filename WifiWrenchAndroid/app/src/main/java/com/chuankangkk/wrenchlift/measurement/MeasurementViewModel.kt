@@ -295,12 +295,9 @@ class MeasurementViewModel @JvmOverloads constructor(
         startProbe(manual)
     }
 
-    /** 测点/记录页「开始测量」：保存板号测点、建新记录并自动连扳手。 */
-    fun startMeasurement(slabNo: String, pointNo: String) {
+    /** 记录页「开始测量」：只有一台扳手，直接自动连接并建新记录（不需要填任何字段）。 */
+    fun startMeasurement() {
         if (_state.value.connectionState.isOnline) return
-        // 先写测点：若后台探测已在进行，建链时新会话会用这里的板号/测点。
-        updateSlabNo(slabNo.trim().ifBlank { MeasurementSession().slabNo })
-        updatePointNo(pointNo.trim().ifBlank { MeasurementSession().pointNo })
         retryCount = 0
         if (connectJob?.isActive == true) {
             _state.update { it.copy(autoConnect = true) }
@@ -763,8 +760,7 @@ class MeasurementViewModel @JvmOverloads constructor(
         }
         require(throughId > 0 || record.actualTorqueNm != null) { "记录尚无测量数据" }
         val summary = WorkbookSummary(
-            recordId = record.id, projectName = record.projectName, lineName = record.lineName, sectionName = record.sectionName,
-            slabNo = record.slabNo, pointNo = record.pointNo, operatorName = record.operatorName, deviceSn = record.deviceSn,
+            recordId = record.id, deviceSn = record.deviceSn,
             startTimeMillis = record.startTime, endTimeMillis = record.endTime, resultStatus = record.resultStatus,
             targetTorqueNm = record.targetTorqueNm, actualTorqueNm = record.actualTorqueNm,
             targetAngleDeg = record.targetAngleDeg, actualAngleDeg = record.actualAngleDeg,
@@ -772,8 +768,7 @@ class MeasurementViewModel @JvmOverloads constructor(
             angleLowerDeg = record.angleLowerDeg, angleUpperDeg = record.angleUpperDeg,
             appVersion = BuildConfig.VERSION_NAME,
         )
-        val metadata = MeasurementState(session = MeasurementSession(slabNo = record.slabNo, pointNo = record.pointNo))
-        val fileName = "R${id}_" + MeasurementCsvExporter.buildFileName(metadata).removeSuffix(".csv") + ".xlsx"
+        val fileName = MeasurementCsvExporter.recordFileName(record.id, record.startTime, "xlsx")
         val target = openExportTarget(fileName, ExportOutcome.XLSX_MIME)
         try {
             target.output.use { output ->
@@ -908,7 +903,7 @@ class MeasurementViewModel @JvmOverloads constructor(
                         lastPacketFunction = if (throughId > 0) WrenchPacket.FUNC_TORQUE_ANGLE else WrenchPacket.FUNC_RESULT,
                         lastRawHex = record.wrenchResultRawHex.orEmpty(),
                     )
-                    val fileName = "R${id}_" + MeasurementCsvExporter.buildFileName(metadata)
+                    val fileName = MeasurementCsvExporter.recordFileName(record.id, record.startTime, "csv")
                     var rowCount = 0
                     val write: suspend (Writer) -> Unit = { writer ->
                         MeasurementCsvExporter.writeHeader(writer)

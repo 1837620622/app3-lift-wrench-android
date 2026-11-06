@@ -32,7 +32,6 @@ object WorkerSamples {
     fun idle(phase: LinkPhase = LinkPhase.PROBING) = MeasurementState(
         linkPhase = phase,
         connectionState = if (phase == LinkPhase.PROBING) ConnectionState.Connecting else ConnectionState.Disconnected,
-        session = MeasurementSession(slabNo = "FZB-012", pointNo = "P03"),
         targetWifiName = "WRENCH-500",
         currentWifiName = if (phase == LinkPhase.NO_WIFI) "--" else "WRENCH-500",
     )
@@ -44,7 +43,7 @@ object WorkerSamples {
             linkPhase = LinkPhase.READY,
             connectionState = ConnectionState.Connected("192.168.4.1", 7888),
             activeEndpoint = WrenchEndpoint.DEFAULT,
-            session = MeasurementSession(slabNo = "FZB-012", pointNo = "P03", deviceSn = "2026110501"),
+            session = MeasurementSession(deviceSn = "2026110501"),
             deviceSn = "2026110501",
             batteryPercent = 82,
             remoteEnabled = remote,
@@ -57,6 +56,20 @@ object WorkerSamples {
             persistedPointCount = 2_505,
             currentSessionId = 7,
             receivedFrameCount = 40,
+        )
+    }
+
+    /** 上一段完整拧到 378°，本段刚拧到约 250°：用来看「上一段」淡线与图例。 */
+    fun liveTwoRuns(nowMillis: Long = System.currentTimeMillis()): MeasurementState {
+        val first = loadingCurve(420, bolt = 1, startMillis = T0)
+        val second = loadingCurve(280, bolt = 2, startMillis = T0 + 120_000L)
+        val base = live(remote = true, motion = MotionCommand.FORWARD, nowMillis = nowMillis)
+        val last = second.last()
+        return base.copy(
+            recentPoints = first + second,
+            persistedPointCount = (first.size + second.size).toLong(),
+            currentTorqueNm = last.sourcePoint.torqueNm,
+            currentAngleDeg = last.sourcePoint.angleDeg,
         )
     }
 

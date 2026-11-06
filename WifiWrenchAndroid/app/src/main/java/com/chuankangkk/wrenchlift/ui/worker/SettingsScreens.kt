@@ -1,8 +1,11 @@
 package com.chuankangkk.wrenchlift.ui.worker
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,6 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,62 +46,73 @@ fun SettingsScreen(
     onOpenDebug: (() -> Unit)?,
 ) {
     val p = palette
-    Column(Modifier.fillMaxSize().background(p.canvas).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = WrenchDimens.screenEdge).testTag("settings")) {
-        PageTopBar("设置", onBack = onBack)
-        Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(WrenchDimens.gap)) {
-            Panel(Modifier.weight(1f).fillMaxHeight(), padding = PaddingValues(16.dp)) {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SectionLabel("扳手 Wi‑Fi")
-                    WrenchTextField(state.targetWifiName, actions.setWifiName, "扳手 Wi‑Fi 名称（只用于提示）", Modifier.fillMaxWidth().testTag("wifi_name"), placeholder = "见扳手铭牌")
-                    Text("换扳手时改这里即可；连接靠自动查找，不需要填地址。", style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary)
-                    Hairline()
-                    SectionLabel("导出")
-                    ToggleRow("同时导出 CSV", state.exportCsvToo, actions.setExportCsvToo, subtitle = "Excel（含图表）为主，CSV 可选", modifier = Modifier.fillMaxWidth().testTag("csv_toggle"))
-                    Hairline()
-                    SectionLabel("界面")
-                    ToggleRow("深色界面", state.darkTheme, actions.setDarkTheme, subtitle = "默认；强光直射时可关闭改用浅色", modifier = Modifier.fillMaxWidth().testTag("dark_toggle"))
-                    Hairline()
-                    SectionLabel("扳手类型（确认机型后再改）")
-                    WrenchModel.entries.forEach { model ->
-                        ChoiceRow(
-                            title = model.label + if (model == WrenchModel.TORQUE) "（默认）" else "",
-                            selected = state.wrenchModel == model,
-                            onClick = { actions.setWrenchModel(model) },
-                            modifier = Modifier.testTag("model_${model.name}"),
-                        )
-                    }
+    BoxWithConstraints(Modifier.fillMaxSize().background(p.canvas).windowInsetsPadding(WindowInsets.safeDrawing)) {
+    // 矮横屏（≤ 400dp）收紧顶栏与面板内边距，保证两块面板内容一屏放下，不藏半截。
+    val short = maxHeight < 400.dp
+    val panelPadding = PaddingValues(horizontal = 16.dp, vertical = if (short) 12.dp else 16.dp)
+    Column(Modifier.fillMaxSize().padding(horizontal = WrenchDimens.screenEdge).testTag("settings")) {
+        PageTopBar("设置", onBack = onBack, height = if (short) WrenchDimens.touch else WrenchDimens.topBarHeight)
+        // 左：扳手（Wi‑Fi 名称、类型）+ 导出与界面；右：维护 + 关于。
+        Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = if (short) 8.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(WrenchDimens.gap)) {
+            Panel(Modifier.weight(1f).fillMaxHeight(), padding = panelPadding) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WrenchTextField(state.targetWifiName, actions.setWifiName, "扳手 Wi‑Fi 名称", Modifier.fillMaxWidth().testTag("wifi_name"), placeholder = "见扳手铭牌")
+                    SectionLabel("扳手类型（确认机型后再改）", Modifier.padding(top = 2.dp))
+                    SegmentedChoice(
+                        options = WrenchModel.entries.map { it to it.shortLabel },
+                        selected = state.wrenchModel,
+                        onSelect = actions.setWrenchModel,
+                        tag = { "model_${it.name}" },
+                    )
+                    Hairline(Modifier.padding(vertical = 2.dp))
+                    ToggleRow("同时导出 CSV", state.exportCsvToo, actions.setExportCsvToo, modifier = Modifier.fillMaxWidth().testTag("csv_toggle"))
+                    ToggleRow("深色界面", state.darkTheme, actions.setDarkTheme, modifier = Modifier.fillMaxWidth().testTag("dark_toggle"))
                 }
             }
-            Panel(Modifier.weight(1f).fillMaxHeight(), padding = PaddingValues(16.dp)) {
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Panel(Modifier.weight(1f).fillMaxHeight(), padding = panelPadding) {
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SectionLabel("维护")
                     NavRow("高级诊断", "查看通信端点与探测记录（维护人员）", onOpenDiagnostics, Modifier.testTag("open_diagnostics"))
                     if (onOpenDebug != null) NavRow("调试工具", "仅调试版", onOpenDebug, Modifier.testTag("open_debug"))
-                    Hairline()
+                    Hairline(Modifier.padding(vertical = 2.dp))
                     SectionLabel("关于")
                     Text("WiFi 扳手 ${BuildConfig.VERSION_NAME}", style = WrenchType.bodyStrong, color = p.textPrimary)
                     Text("隔振器顶升调频采集", style = WrenchType.bodyStyle, color = p.textSecondary)
-                    Text("著作权：传康Kk（GitHub 1837620622）· 免费供应", style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary)
-                    Text("未标定不输出正式力值；分离点 / 平衡点待分析。", style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textTertiary)
+                    Text("作者：传康Kk（GitHub 1837620622）", style = WrenchType.labelStyle, color = p.textSecondary, modifier = Modifier.testTag("about_author"))
                 }
             }
         }
     }
+    }
 }
 
+/** 分段单选（扳手类型）：一行放下，字放不下就缩，不换行。 */
 @Composable
-private fun ChoiceRow(title: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun <T> SegmentedChoice(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, tag: (T) -> String) {
     val p = palette
+    val shape = WrenchDimens.buttonShape
     Row(
-        modifier.fillMaxWidth().heightIn(min = WrenchDimens.touch).clip(WrenchDimens.buttonShape)
-            .clickable(role = Role.RadioButton, onClick = onClick).padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        Modifier.fillMaxWidth().heightIn(min = WrenchDimens.touch).clip(shape).background(p.panelSunken).border(1.dp, p.hairline, shape).padding(3.dp)
+            .selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        androidx.compose.material3.RadioButton(
-            selected = selected, onClick = null,
-            colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = p.accent, unselectedColor = p.textTertiary),
-        )
-        Text(title, style = WrenchType.bodyStyle, color = if (selected) p.textPrimary else p.textSecondary, modifier = Modifier.padding(start = 6.dp))
+        options.forEach { (value, label) ->
+            val on = value == selected
+            Box(
+                Modifier
+                    .weight(1f)
+                    .heightIn(min = 42.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (on) p.panel else p.panelSunken)
+                    .then(if (on) Modifier.border(1.dp, p.hairline, RoundedCornerShape(8.dp)) else Modifier)
+                    .selectable(selected = on, role = Role.RadioButton, onClick = { onSelect(value) })
+                    .padding(horizontal = 4.dp)
+                    .testTag(tag(value)),
+                contentAlignment = Alignment.Center,
+            ) {
+                FitText(label, WrenchType.buttonStyle.copy(fontSize = 15.sp), color = if (on) p.textPrimary else p.textSecondary, minSize = 11.sp)
+            }
+        }
     }
 }
 

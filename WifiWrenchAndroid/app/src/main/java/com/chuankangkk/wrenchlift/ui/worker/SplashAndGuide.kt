@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +30,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -68,6 +72,9 @@ fun MeasurementState.onWrenchNetwork(): Boolean {
 /**
  * 连接引导（NET-04）：只提示去系统连扳手 Wi‑Fi、名称说明与连接状态；没有端口栏。
  */
+/** wifi_wrench_splash_t_handle.png：820×430。 */
+private const val GUIDE_IMAGE_ASPECT = 820f / 430f
+
 @Composable
 fun ConnectGuideScreen(
     state: MeasurementState,
@@ -80,31 +87,38 @@ fun ConnectGuideScreen(
         Modifier.fillMaxSize().background(p.canvas).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = WrenchDimens.screenEdge).testTag("guide"),
     ) {
         PageTopBar("连接扳手", onBack = null) {
-            IconAction(WrenchIcon.Records, "测点与记录", onOpenRecords)
+            IconAction(WrenchIcon.Records, "记录", onOpenRecords)
             Spacer(Modifier.width(8.dp))
             IconAction(WrenchIcon.Settings, "设置", onOpenSettings)
         }
         Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(WrenchDimens.gap)) {
             Panel(Modifier.weight(0.42f).fillMaxHeight(), padding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
                 Box(Modifier.fillMaxSize().background(SplashColors.background), contentAlignment = Alignment.Center) {
+                    // 产品图按原比例铺满面板宽度，四边渐隐进深炭底：不留硬边框，也不裁掉两侧手把。
                     Image(
                         painter = painterResource(R.drawable.wifi_wrench_splash_t_handle),
                         contentDescription = "T 形手把 Wi‑Fi 扭矩扳手",
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(GUIDE_IMAGE_ASPECT)
+                            .drawWithContent {
+                                drawContent()
+                                val bg = SplashColors.background
+                                drawRect(Brush.verticalGradient(0f to bg, 0.22f to Color.Transparent, 0.78f to Color.Transparent, 1f to bg))
+                                drawRect(Brush.horizontalGradient(0f to bg, 0.08f to Color.Transparent, 0.92f to Color.Transparent, 1f to bg))
+                            },
                     )
                 }
             }
             Panel(Modifier.weight(0.58f).fillMaxHeight(), padding = androidx.compose.foundation.layout.PaddingValues(18.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {
                     GuideStep(1, "打开系统设置，连上扳手的 Wi‑Fi", state.targetWifiName.takeIf { it.isNotBlank() }?.let { "名称：$it" } ?: "名称见扳手铭牌")
-                    GuideStep(2, "回到这里，会自动连上扳手", "不用做任何设置")
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        StatusPill(WorkerText.link(state), linkColor(state.linkPhase), icon = WrenchIcon.Wifi, modifier = Modifier.testTag("guide_status"))
-                        WorkerText.linkHint(state)?.let {
-                            Spacer(Modifier.width(6.dp))
-                            Text(it, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary)
-                        }
+                    GuideStep(2, "回到这里，会自动连上扳手", null)
+                    // 状态胶囊单独一行；提示写在下面（未连 Wi‑Fi 时第 2 步已说明，不再重复）。
+                    StatusPill(WorkerText.link(state), linkColor(state.linkPhase), icon = WrenchIcon.Wifi, modifier = Modifier.testTag("guide_status"))
+                    WorkerText.linkHint(state)?.takeIf { state.linkPhase != LinkPhase.NO_WIFI }?.let {
+                        Text(it, style = WrenchType.labelStyle, color = p.textSecondary, modifier = Modifier.padding(top = 0.dp))
                     }
                     Text("当前 Wi‑Fi：${state.currentWifiName}", style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textTertiary)
                 }
@@ -122,7 +136,7 @@ fun ConnectGuideScreen(
 }
 
 @Composable
-private fun GuideStep(number: Int, title: String, detail: String) {
+private fun GuideStep(number: Int, title: String, detail: String?) {
     val p = palette
     Row(verticalAlignment = Alignment.Top) {
         Box(Modifier.size(30.dp).clip(CircleShape).background(p.accentSoft), contentAlignment = Alignment.Center) {
@@ -131,7 +145,7 @@ private fun GuideStep(number: Int, title: String, detail: String) {
         Spacer(Modifier.width(12.dp))
         Column {
             Text(title, style = WrenchType.bodyStrong.copy(fontSize = 17.sp, lineHeight = 23.sp), color = p.textPrimary)
-            Text(detail, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, textAlign = TextAlign.Start)
+            if (detail != null) Text(detail, style = WrenchType.labelStyle, color = p.textSecondary, textAlign = TextAlign.Start)
         }
     }
 }

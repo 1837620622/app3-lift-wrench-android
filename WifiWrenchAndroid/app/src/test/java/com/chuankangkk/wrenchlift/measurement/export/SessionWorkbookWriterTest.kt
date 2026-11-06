@@ -13,8 +13,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 class SessionWorkbookWriterTest {
     private fun summary(target: Double? = 180.0, actual: Double? = 176.0) = WorkbookSummary(
-        recordId = 7, projectName = "钢弹簧浮置板顶升", lineName = "1号线", sectionName = "A-B",
-        slabNo = "FZB-012", pointNo = "P03", operatorName = "张三", deviceSn = "20260101",
+        recordId = 7, deviceSn = "20260101",
         startTimeMillis = 1_762_300_000_000, endTimeMillis = 1_762_300_600_000, resultStatus = "合格",
         targetTorqueNm = target, actualTorqueNm = actual, targetAngleDeg = 90.0, actualAngleDeg = 88.0,
         torqueLowerNm = 150.0, torqueUpperNm = 220.0, angleLowerDeg = 1.0, angleUpperDeg = 360.0,
@@ -43,7 +42,7 @@ class SessionWorkbookWriterTest {
     @Test fun fullDataIsNotTruncatedAndNativeChartsReferenceSheetRanges() {
         val points = rows(25_000)
         val (bytes, stats) = build(points)
-        System.getenv("WIFI_WRENCH_EVIDENCE_DIR")?.let { File(it, "sample-export.xlsx").writeBytes(bytes) }
+        System.getenv("WIFI_WRENCH_EVIDENCE_DIR")?.let { File(it).apply { mkdirs() }.resolve("sample-export.xlsx").writeBytes(bytes) }
         assertEquals(25_000L, stats.processRows)
         assertEquals(5, stats.chartCount)
         assertTrue("图表点应被抽样", stats.chartRows <= SessionWorkbookWriter.MAX_CHART_ROWS + 2)
@@ -96,8 +95,26 @@ class SessionWorkbookWriterTest {
             assertTrue(labels.contains("过程点数（全量）"))
             val countRow = (0..summary.lastRowNum).first { summary.getRow(it)?.getCell(0)?.stringCellValue == "过程点数（全量）" }
             assertEquals(3_000.0, summary.getRow(countRow).getCell(1).numericCellValue, 0.0)
-            assertTrue(labels.contains("未标定：本表不含顶升力等正式力值。"))
+            assertTrue(labels.contains("未标定：不含顶升力等正式力值。"))
+            // 单台扳手：不出现板号/测点，也不在导出里署名。
+            assertTrue(labels.none { it.contains("板号") || it.contains("测点") || it.contains("传康") || it.contains("免费") })
+            // 统计值只取实测：两段 0..1499 每段扭矩 0..399 循环，峰值 399 出现在第 400 个点（转角 19.95°）。
+            fun value(label: String) = summary.getRow((0..summary.lastRowNum).first { summary.getRow(it)?.getCell(0)?.stringCellValue == label }).getCell(1)
+            assertEquals(399.0, value("峰值扭矩 N·m").numericCellValue, 0.0)
+            assertEquals(19.95, value("峰值处转角 °").numericCellValue, 1e-9)
+            assertEquals(0.0, value("最小转角 °").numericCellValue, 0.0)
+            assertEquals(1_499 * 0.05, value("最大转角 °").numericCellValue, 1e-9)
+            assertEquals(2.0, value("运行段数").numericCellValue, 0.0)
+            assertEquals((2_999 / 20).toDouble(), value("首末点间隔 s").numericCellValue, 0.0)
         }
+    }
+
+    @Test fun recordFileNameUsesRecordIdAndStartTimeOnly() {
+        // 2025-11-05 07:46:40 UTC = 15:46:40 北京时间
+        assertEquals(
+            "WifiWrench_R7_20251105_154640.xlsx",
+            com.chuankangkk.wrenchlift.measurement.MeasurementCsvExporter.recordFileName(7, 1_762_328_800_000, "xlsx"),
+        )
     }
 
     @Test fun resultOnlyRecordStillExportsTargetVersusActualChart() {
@@ -118,12 +135,38 @@ class SessionWorkbookWriterTest {
         XSSFWorkbook(ByteArrayInputStream(bytes)).use { book -> assertEquals(300, book.getSheet("过程数据").lastRowNum) }
     }
 
+    /** 接收时间精确到毫秒：Excel 序列值不能被有效位数截掉毫秒。 */
+    @Test fun receivedTimeKeepsMillisecondsInExcelDateCells() {
+        val base = 1_762_300_000_000L
+        val offsets = listOf(1L, 37L, 499L, 500L, 999L, 86_399_999L)
+        val points = offsets.mapIndexed { i, ms ->
+            ProcessRow(index = i + 1L, receivedAtMillis = base + ms, boltNo = 1, torqueNm = 10.0, angleDeg = i.toDouble(), angleRaw = i,
+                frameLabel = "扭矩转角过程", rawHex = "C5")
+        }
+        val (bytes, _) = build(points)
+        XSSFWorkbook(ByteArrayInputStream(bytes)).use { book ->
+            val data = book.getSheet("过程数据")
+            val formatter = org.apache.poi.ss.usermodel.DataFormatter()
+            points.forEachIndexed { i, expected ->
+                val cell = data.getRow(i + 1).getCell(1)
+                val local = expected.receivedAtMillis + java.util.TimeZone.getTimeZone("Asia/Shanghai").getOffset(expected.receivedAtMillis)
+                val millis = (cell.numericCellValue - 25_569.0) * 86_400_000.0
+                assertEquals("序列值换回毫秒 $i", local.toDouble(), millis, 0.05)
+                val expectedText = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.ROOT)
+                    .apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai") }.format(java.util.Date(expected.receivedAtMillis))
+                assertEquals("显示到毫秒 $i", expectedText, formatter.formatCellValue(cell))
+            }
+        }
+    }
+
     @Test fun textIsEscapedAndControlCharactersDropped() {
         assertEquals("a&amp;b&lt;c&gt;&quot;d", Xml.escape("a&b<c>\"d\u0001"))
         assertEquals("'图表数据'!\$B\$2:\$B\$9", Xml.range("图表数据", 1, 2, 9))
         assertEquals("AA", Xml.column(26))
         assertEquals("12", Xml.number(12.0))
         assertEquals("0.5", Xml.number(0.5))
+        assertEquals("0.3", Xml.number(0.1 + 0.2))
+        assertEquals("19.95", Xml.number(399 * 0.05))
         assertEquals(null, Xml.number(Double.NaN))
     }
 

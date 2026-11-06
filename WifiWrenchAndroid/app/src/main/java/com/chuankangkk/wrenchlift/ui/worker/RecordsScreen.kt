@@ -1,6 +1,11 @@
 package com.chuankangkk.wrenchlift.ui.worker
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,16 +22,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,8 +42,8 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 测点 / 记录页：工作台「返回」的去处。左边填板号测点开始新测量；右边是本机记录，可逐条导出 Excel。
- * 板号、测点只是现场记录字段，不是通信参数（NET-05）。
+ * 记录页：工作台「返回」的去处。只有一台扳手：左边是扳手状态与「开始测量」（自动连接、建新记录，不填任何字段）；
+ * 右边是本机记录，可逐条导出 Excel（全量过程点 + 原生图表）。
  */
 @Composable
 fun RecordsScreen(
@@ -53,53 +54,58 @@ fun RecordsScreen(
     onOpenGuide: () -> Unit,
 ) {
     val p = palette
-    var slab by rememberSaveable { mutableStateOf(state.session.slabNo) }
-    var point by rememberSaveable { mutableStateOf(state.session.pointNo) }
     var retryId by remember { mutableLongStateOf(-1L) }
+    val online = state.connectionState.isOnline
     Column(Modifier.fillMaxSize().background(p.canvas).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = WrenchDimens.screenEdge).testTag("records")) {
-        PageTopBar("测点与记录", onBack = null) {
+        PageTopBar("记录", onBack = null) {
             StatusPill(WorkerText.linkShort(state), linkColor(state.linkPhase), icon = WrenchIcon.Wifi, onClick = onOpenGuide)
             Spacer(Modifier.width(8.dp))
             IconAction(WrenchIcon.Settings, "设置", onOpenSettings, Modifier.testTag("open_settings"))
         }
         Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(WrenchDimens.gap)) {
-            Panel(Modifier.weight(0.38f).fillMaxHeight(), padding = PaddingValues(16.dp)) {
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("新测点", style = WrenchType.headlineStyle.copy(fontSize = 19.sp), color = p.textPrimary)
-                    Text("同一测点重复试验会各存一条记录", style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WrenchTextField(slab, { slab = it.take(32) }, "板号", Modifier.weight(1f).testTag("slab_input"))
-                        WrenchTextField(point, { point = it.take(32) }, "测点", Modifier.weight(1f).testTag("point_input"))
-                    }
+            Panel(Modifier.weight(0.36f).fillMaxHeight().testTag("wrench_card"), padding = PaddingValues(16.dp)) {
+                Text("扳手", style = WrenchType.headlineStyle.copy(fontSize = 19.sp), color = p.textPrimary)
+                Column(Modifier.weight(1f).padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                    InfoRow("通信", WorkerText.link(state), linkColor(state.linkPhase), dot = true)
+                    Hairline()
+                    InfoRow("SN", state.deviceSn.takeIf { it.isNotBlank() && it != "未知设备" } ?: "--")
+                    Hairline()
+                    InfoRow("电量", state.batteryPercent?.let { "$it%" } ?: "--")
+                    Hairline()
+                    InfoRow("类型", state.wrenchModel.label)
                 }
                 ControlButton(
-                    "开始测量", null,
+                    if (online) "回到工作台" else "开始测量", null,
                     onClick = {
-                        actions.startMeasurement(slab, point)
+                        if (!online) actions.startMeasurement()
                         onStart()
                     },
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("start_measurement"),
                     tone = ButtonTone.Accent, height = 56.dp,
-                    enabled = !state.connectionState.isOnline,
                 )
-                Text("开始后自动连接扳手", style = WrenchType.captionStyle, color = p.textTertiary, modifier = Modifier.padding(top = 4.dp))
             }
-            Panel(Modifier.weight(0.62f).fillMaxHeight(), padding = PaddingValues(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Panel(Modifier.weight(0.64f).fillMaxHeight(), padding = PaddingValues(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.heightIn(min = 32.dp)) {
                     Text("本机记录", style = WrenchType.headlineStyle.copy(fontSize = 19.sp), color = p.textPrimary, modifier = Modifier.weight(1f))
-                    Text("每条导出全部过程点（Excel 含图表）", style = WrenchType.captionStyle, color = p.textSecondary)
+                    if (state.recentSessions.isNotEmpty()) {
+                        Text("${state.recentSessions.size} 条", style = WrenchType.labelStyle, color = p.textSecondary)
+                    }
                 }
                 LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("record_list"), contentPadding = PaddingValues(vertical = 6.dp)) {
                     if (state.recentSessions.isEmpty()) {
-                        item { Text("还没有记录。填好测点后点「开始测量」。", style = WrenchType.bodyStyle, color = p.textSecondary, modifier = Modifier.padding(vertical = 16.dp)) }
+                        item { Text("还没有记录", style = WrenchType.bodyStyle, color = p.textSecondary, modifier = Modifier.padding(vertical = 16.dp)) }
                     }
                     items(state.recentSessions, key = { it.id }) { record ->
-                        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("${record.slabNo} · ${record.pointNo}", style = WrenchType.bodyStrong, color = p.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
-                                    "${recordTime(record.startTime)} · ${record.resultStatus}" + (record.actualTorqueNm?.let { " · ${WorkerText.readout(it, true)} N·m" } ?: ""),
-                                    style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    "R${record.id} · ${recordTime(record.startTime)}",
+                                    style = WrenchType.bodyStrong.copy(fontSize = 16.sp, fontFeatureSettings = "tnum"), color = p.textPrimary,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    record.resultStatus + (record.actualTorqueNm?.let { " · ${WorkerText.readout(it, true)} N·m" } ?: ""),
+                                    style = WrenchType.labelStyle, color = p.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 )
                             }
                             ControlButton("导出", WrenchIcon.Export, {
@@ -123,4 +129,17 @@ fun RecordsScreen(
     ExportDialogs(state, actions, onRetry = { if (retryId > 0) actions.exportSession(retryId) else actions.export() })
 }
 
-private fun recordTime(millis: Long): String = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(millis))
+@Composable
+private fun InfoRow(label: String, value: String, valueColor: Color = palette.textPrimary, dot: Boolean = false) {
+    val p = palette
+    Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = WrenchType.labelStyle.copy(fontSize = 14.sp), color = p.textSecondary, modifier = Modifier.width(52.dp))
+        if (dot) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(valueColor))
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(value, style = WrenchType.valueStyle, color = valueColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private fun recordTime(millis: Long): String = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(millis))

@@ -36,34 +36,40 @@ import java.io.File
 class WorkerScreensTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
-    private fun show(state: MeasurementState, actions: WorkerActions = WorkerActions(), screen: WorkerScreen = WorkerScreen.Workbench) {
+    private fun show(
+        state: MeasurementState,
+        actions: WorkerActions = WorkerActions(),
+        screen: WorkerScreen = WorkerScreen.Workbench,
+        debugContent: (@androidx.compose.runtime.Composable () -> Unit)? = null,
+    ) {
         compose.setContent {
-            WifiWrenchWorkerApp(state, actions, debugContent = null, startScreen = screen, immersive = false)
+            WifiWrenchWorkerApp(state, actions, debugContent = debugContent, startScreen = screen, immersive = false)
         }
         compose.waitForIdle()
     }
 
     @Test fun workbenchHasSixControlsAndNoPortOrIpOnMainScreen() {
         show(WorkerSamples.live(remote = false))
-        listOf("back", "top_bar", "readouts", "torque_chart", "controls", "remote_toggle", "forward", "reverse", "stop", "params", "export", "bottom_strip")
+        listOf("back", "top_bar", "readouts", "torque_chart", "chart_tabs", "controls", "remote_toggle", "forward", "reverse", "stop", "params", "export", "stored_count")
             .forEach { compose.onNodeWithTag(it, useUnmergedTree = true).assertExists() }
-        // 顶栏分格：板号 · 测点 · SN · 电量 · 通信 · 远程 · 返回。
-        compose.onNodeWithText("FZB-012").assertIsDisplayed()
-        compose.onNodeWithText("P03").assertIsDisplayed()
+        // 顶栏分格：SN · 电量 · 通信 · 远程 · 已记录 · 返回（只有一台扳手，不显示板号/测点）。
         compose.onNodeWithText("2026110501").assertIsDisplayed()
         compose.onNodeWithText("82%").assertIsDisplayed()
         compose.onNodeWithText("已连上", substring = true).assertIsDisplayed()
         compose.onNodeWithText("未启用").assertIsDisplayed()
-        compose.onNodeWithText("扭矩 / 转角").assertIsDisplayed()
+        compose.onNodeWithText("2505 点").assertIsDisplayed()
+        compose.onNodeWithText("扭矩").assertIsDisplayed()
+        compose.onNodeWithText("转角").assertIsDisplayed()
         compose.onNodeWithText("峰值", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("扭矩–转角").assertIsDisplayed()
         // NET-02：主流程不出现端口 / IP / 协议码。
         listOf("7888", "192.168", "端口", "TCP", "0x").forEach { word ->
             assertEquals("主屏不应出现 $word", 0, compose.onAllNodesWithText(word, substring = true).fetchSemanticsNodes().size)
         }
-        listOf("已确认平衡", "模拟").forEach { word ->
-            assertEquals(0, compose.onAllNodesWithText(word, substring = true).fetchSemanticsNodes().size)
+        // 工业终端不写说明性废话、不署名：板号/测点、显示窗口说明、待分析、作者/供应都不在主屏。
+        listOf("已确认平衡", "模拟", "板号", "测点", "FZB", "完整数据", "见导出", "显示窗口", "待分析", "免费", "传康").forEach { word ->
+            assertEquals("主屏不应出现 $word", 0, compose.onAllNodesWithText(word, substring = true).fetchSemanticsNodes().size)
         }
-        compose.onNodeWithText(com.chuankangkk.wrenchlift.measurement.WorkerText.WINDOW_NOTE, substring = true).assertExists()
         capture("workbench-live-remote-off")
     }
 
@@ -74,7 +80,8 @@ class WorkerScreensTest {
         compose.onNodeWithTag("forward").assertIsNotEnabled()
         compose.onNodeWithTag("reverse").assertIsNotEnabled()
         compose.onNodeWithTag("stop").assertIsEnabled().performClick()
-        compose.onNodeWithText("先开远程，才能转动").assertExists()
+        // 640dp 宽时控制列窄，用短句；宽屏用完整句（见 remoteOffHintUsesFullSentenceOnWideScreens）。
+        compose.onNodeWithText("先开远程").assertIsDisplayed()
         compose.onNodeWithTag("remote_toggle").performClick()
         compose.runOnIdle {
             assertEquals(1, remoteOn)
@@ -158,22 +165,59 @@ class WorkerScreensTest {
         capture("splash")
     }
 
-    @Test fun recordsPageStartsMeasurementWithSlabAndPoint() {
-        var started: Pair<String, String>? = null
-        show(WorkerSamples.idle(LinkPhase.IDLE).copy(recentSessions = WorkerSamples.sessions()), WorkerActions(startMeasurement = { s, p -> started = s to p }), WorkerScreen.Records)
+    @Test fun recordsPageStartsMeasurementDirectlyWithoutAnyForm() {
+        var started = 0
+        show(WorkerSamples.idle(LinkPhase.IDLE).copy(recentSessions = WorkerSamples.sessions()), WorkerActions(startMeasurement = { started++ }), WorkerScreen.Records)
+        compose.onNodeWithTag("wrench_card").assertIsDisplayed()
+        compose.onNodeWithText("R20 · ", substring = true).assertIsDisplayed()
+        listOf("板号", "测点", "FZB").forEach { word ->
+            assertEquals("记录页不应出现 $word", 0, compose.onAllNodesWithText(word, substring = true).fetchSemanticsNodes().size)
+        }
         capture("records")
         compose.onNodeWithTag("start_measurement").performClick()
-        compose.runOnIdle { assertEquals("FZB-012" to "P03", started) }
+        compose.runOnIdle { assertEquals(1, started) }
         compose.onNodeWithTag("readouts").assertExists()
+    }
+
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
+    fun chartSwitchesBetweenTorqueAngleAndSequenceViews() {
+        show(WorkerSamples.liveTwoRuns())
+        compose.onNodeWithTag("chart_tabs").assertIsDisplayed()
+        compose.onNodeWithContentDescription("扭矩–转角实时曲线").assertExists()
+        capture("chart-torque-angle-two-runs")
+        compose.onNodeWithTag("chart_mode_torque_seq").performClick()
+        compose.onNodeWithContentDescription("扭矩–序号实时曲线").assertExists()
+        capture("chart-torque-seq")
+        compose.onNodeWithTag("chart_mode_angle_seq").performClick()
+        compose.onNodeWithContentDescription("转角–序号实时曲线").assertExists()
+        capture("chart-angle-seq")
+    }
+
+    @Test fun controlFeedbackShowsInControlColumnStatusLine() {
+        show(WorkerSamples.live(remote = true).copy(controlMessage = "参数已写入"))
+        compose.onNodeWithText("参数已写入").assertIsDisplayed()
     }
 
     @Test fun portsOnlyAppearInAdvancedDiagnostics() {
         show(WorkerSamples.live(remote = false), screen = WorkerScreen.Settings)
         assertEquals(0, compose.onAllNodesWithText("端口", substring = true).fetchSemanticsNodes().size)
+        // 作者只在「关于」里写一次。
+        compose.onNodeWithTag("about_author", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("作者：传康Kk（GitHub 1837620622）").assertExists()
+        assertEquals(0, compose.onAllNodesWithText("免费供应", substring = true).fetchSemanticsNodes().size)
         capture("settings")
         compose.onNodeWithTag("open_diagnostics").performClick()
         compose.onNodeWithText("192.168.4.1:7888（先试）").assertExists()
         capture("diagnostics")
+    }
+
+    /** 640×360（最矮的目标横屏）+ 调试版入口：设置两块面板的每一项都在屏内，不藏半截。 */
+    @Test fun settingsFitOneScreenEvenWithDebugEntry() {
+        show(WorkerSamples.live(remote = false), screen = WorkerScreen.Settings, debugContent = {})
+        listOf("wifi_name", "model_TORQUE", "model_PULSE_RCH", "csv_toggle", "dark_toggle", "open_diagnostics", "open_debug", "about_author")
+            .forEach { compose.onNodeWithTag(it, useUnmergedTree = true).assertIsDisplayed() }
+        capture("settings-debug-build")
     }
 
     @Test fun darkThemeWorkbench() {
@@ -224,7 +268,21 @@ class WorkerScreensTest {
 
     @Test fun wrenchErrorCodeIsShownNextToControls() {
         show(WorkerSamples.live(remote = true).copy(deviceErrorCode = 18))
+        compose.onNodeWithText("报错 18").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
+    fun wrenchErrorCodeUsesFullSentenceOnWideScreens() {
+        show(WorkerSamples.live(remote = true).copy(deviceErrorCode = 18))
         compose.onNodeWithText("扳手报错（代码 18）").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xhdpi")
+    fun remoteOffHintUsesFullSentenceOnWideScreens() {
+        show(WorkerSamples.live(remote = false))
+        compose.onNodeWithText("先开远程，才能转动").assertIsDisplayed()
     }
 
     @Test

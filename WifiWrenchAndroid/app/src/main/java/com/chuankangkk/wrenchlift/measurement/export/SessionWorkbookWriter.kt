@@ -24,14 +24,9 @@ data class ProcessRow(
     val rawHex: String,
 )
 
+/** 单台扳手的一条记录：不含板号/测点等现场台账字段。 */
 data class WorkbookSummary(
     val recordId: Long,
-    val projectName: String,
-    val lineName: String,
-    val sectionName: String,
-    val slabNo: String,
-    val pointNo: String,
-    val operatorName: String,
     val deviceSn: String,
     val startTimeMillis: Long,
     val endTimeMillis: Long?,
@@ -103,11 +98,10 @@ object SessionWorkbookWriter {
         entry("docProps/app.xml") { it.write(appProps()) }
         entry("xl/styles.xml") { it.write(Styles.xml) }
 
-        val summaryLayout = SummaryLayout(summary, totalPoints)
-        entry("xl/worksheets/sheet1.xml") { summaryLayout.write(it) }
-
-        // 过程数据：全量流式写出，同时按序号分桶抽出图表用的点。
+        // 过程数据：全量流式写出，同时按序号分桶抽出图表用的点、统计峰值与转角范围。
+        // （ZIP 内各部件顺序无关紧要，概要页放在数据之后写，才能带上统计值。）
         val sampler = ChartSampler(totalPoints)
+        val stats = ProcessStats()
         zip.putNextEntry(ZipEntry("xl/worksheets/sheet3.xml"))
         val dataSheet = SheetWriter(writer, listOf(8.0, 24.0, 16.0, 12.0, 8.0, 11.0, 10.0, 11.0, 14.0, 60.0), freezeHeader = true)
         dataSheet.begin()
@@ -124,12 +118,16 @@ object SessionWorkbookWriter {
                 ),
             )
             sampler.accept(row, relativeSeconds)
+            stats.accept(row)
             written += 1
         }
         dataSheet.end()
         writer.flush()
         zip.closeEntry()
         val samples = sampler.finish()
+
+        val summaryLayout = SummaryLayout(summary, totalPoints, stats)
+        entry("xl/worksheets/sheet1.xml") { summaryLayout.write(it) }
 
         entry("xl/worksheets/sheet4.xml") { out ->
             val sheet = SheetWriter(out, listOf(8.0, 10.0, 11.0, 12.0), freezeHeader = true)
@@ -171,7 +169,7 @@ object SessionWorkbookWriter {
         entry("xl/worksheets/sheet2.xml") { out ->
             val sheet = SheetWriter(out, emptyList(), freezeHeader = false)
             sheet.begin()
-            sheet.row(listOf(text("WiFi 扳手 · 记录 R${summary.recordId} · ${summary.slabNo} / ${summary.pointNo}")), Styles.TITLE)
+            sheet.row(listOf(text("WiFi 扳手 · 记录 R${summary.recordId} · ${formatTime(summary.startTimeMillis).take(16)}")), Styles.TITLE)
             sheet.row(listOf(text(chartNote(hasPoints, totalPoints, samples.count { it != null }))), Styles.NOTE)
             sheet.end(drawingRelId = if (charts.isNotEmpty()) "rId1" else null)
         }
@@ -205,9 +203,55 @@ object SessionWorkbookWriter {
     }
 
     private fun chartNote(hasPoints: Boolean, total: Long, sampled: Int): String = when {
-        !hasPoints -> "本记录没有过程点，仅有扳手结果帧。"
-        sampled.toLong() < total -> "图表取自「图表数据」页：全量 $total 点按序号分桶保留每桶最大/最小扭矩，共 $sampled 点；完整数据见「过程数据」页，未截断。运行段之间断开，不跨段连线。"
-        else -> "图表取自「图表数据」页（与「过程数据」同为全量 $total 点）。运行段之间断开，不跨段连线。"
+        !hasPoints -> "本记录只有扳手结果帧，没有过程点。"
+        sampled.toLong() < total -> "图表点 $sampled / 全量 $total（按序号分桶，保留每桶最大、最小扭矩）；运行段之间断开。"
+        else -> "图表点 = 全量 $total；运行段之间断开。"
+    }
+
+    /** 新运行段：螺栓号变化，或转角突然回落（新一次拧紧）。图表断点与「运行段数」同一口径。 */
+    private fun isNewRun(previous: ProcessRow, row: ProcessRow): Boolean =
+        row.boltNo != previous.boltNo || row.angleDeg < previous.angleDeg - RESET_DROP_DEG
+
+    /** 过程数据统计（只统计实测值，不做任何推算）。 */
+    private class ProcessStats {
+        var peakTorque: Double? = null
+            private set
+        var angleAtPeak: Double? = null
+            private set
+        var minAngle: Double? = null
+            private set
+        var maxAngle: Double? = null
+            private set
+        var firstMillis: Long? = null
+            private set
+        var lastMillis: Long? = null
+            private set
+        var runs: Int = 0
+            private set
+        private var previous: ProcessRow? = null
+
+        fun accept(row: ProcessRow) {
+            val prev = previous
+            if (prev == null || isNewRun(prev, row)) runs += 1
+            if (row.torqueNm.isFinite() && (peakTorque == null || row.torqueNm > peakTorque!!)) {
+                peakTorque = row.torqueNm
+                angleAtPeak = row.angleDeg
+            }
+            if (row.angleDeg.isFinite()) {
+                minAngle = minAngle?.let { minOf(it, row.angleDeg) } ?: row.angleDeg
+                maxAngle = maxAngle?.let { maxOf(it, row.angleDeg) } ?: row.angleDeg
+            }
+            if (firstMillis == null) firstMillis = row.receivedAtMillis
+            lastMillis = row.receivedAtMillis
+            previous = row
+        }
+
+        val durationSeconds: Double?
+            get() {
+                val first = firstMillis ?: return null
+                val last = lastMillis ?: return null
+                return (last - first) / 1000.0
+            }
     }
 
     private data class Sample(val index: Long, val angle: Double, val torque: Double, val seconds: Double)
@@ -221,7 +265,7 @@ object SessionWorkbookWriter {
 
         fun accept(row: ProcessRow, seconds: Double) {
             val prev = previous
-            if (prev != null && (row.boltNo != prev.boltNo || row.angleDeg < prev.angleDeg - RESET_DROP_DEG)) {
+            if (prev != null && isNewRun(prev, row)) {
                 flush()
                 if (output.isNotEmpty() && output.last() != null) output += null
             }
@@ -250,26 +294,41 @@ object SessionWorkbookWriter {
         }
     }
 
-    /** 概要页（含目标/实际两行，供柱状图引用）。 */
-    private class SummaryLayout(private val summary: WorkbookSummary, private val totalPoints: Long) {
+    /** 概要页：记录 · 过程数据统计 · 扳手结果帧（目标/实际两行供柱状图引用）· 说明 · 导出信息。 */
+    private class SummaryLayout(
+        private val summary: WorkbookSummary,
+        private val totalPoints: Long,
+        private val stats: ProcessStats,
+    ) {
         var targetActualFirstRow: Int = 0
             private set
 
         fun write(out: Writer) {
-            val sheet = SheetWriter(out, listOf(22.0, 46.0), freezeHeader = false)
+            val sheet = SheetWriter(out, listOf(22.0, 30.0), freezeHeader = false)
             sheet.begin()
-            sheet.row(listOf(text("WiFi 扳手 · 测量记录")), Styles.TITLE)
+            sheet.row(listOf(text("WiFi 扳手 · 测量记录 R${summary.recordId}")), Styles.TITLE)
+            fun section(title: String) {
+                sheet.row(emptyList())
+                sheet.row(listOf(text(title), Cell.Blank), Styles.HEADER)
+            }
             fun line(label: String, value: Cell) = sheet.row(listOf(text(label), value))
+
+            section("记录")
             line("记录编号", text("R${summary.recordId}"))
-            line("项目", text(summary.projectName))
-            line("线路 / 区间", text("${summary.lineName} / ${summary.sectionName}"))
-            line("板号", text(summary.slabNo))
-            line("测点", text(summary.pointNo))
-            line("操作员", text(summary.operatorName))
-            line("扳手 SN", text(summary.deviceSn))
+            line("扳手 SN", text(summary.deviceSn.takeIf { it.isNotBlank() && it != "未知设备" } ?: "--"))
             line("开始时间", dateTime(summary.startTimeMillis))
             line("结束时间", summary.endTimeMillis?.let { dateTime(it) } ?: text("未结束"))
             line("过程点数（全量）", num(totalPoints))
+            line("运行段数", num(stats.runs))
+            line("首末点间隔 s", num(stats.durationSeconds))
+
+            section("过程数据统计")
+            line("峰值扭矩 N·m", num(stats.peakTorque))
+            line("峰值处转角 °", num(stats.angleAtPeak))
+            line("最小转角 °", num(stats.minAngle))
+            line("最大转角 °", num(stats.maxAngle))
+
+            section("扳手结果帧")
             line("结果状态", text(summary.resultStatus))
             targetActualFirstRow = sheet.rowsWritten + 1
             line(TARGET_LABEL, num(summary.targetTorqueNm))
@@ -278,13 +337,13 @@ object SessionWorkbookWriter {
             line("实际转角 °", num(summary.actualAngleDeg))
             line("扭矩下限 / 上限 N·m", text(pair(summary.torqueLowerNm, summary.torqueUpperNm)))
             line("转角下限 / 上限 °", text(pair(summary.angleLowerDeg, summary.angleUpperDeg)))
-            sheet.row(emptyList())
-            sheet.row(listOf(text("说明")), Styles.LABEL)
+
+            section("说明")
             NOTES.forEach { sheet.row(listOf(text(it)), Styles.NOTE) }
-            sheet.row(emptyList())
-            sheet.row(listOf(text("导出时间"), dateTime(summary.exportedAtMillis)))
-            sheet.row(listOf(text("导出软件"), text("WiFi 扳手 ${summary.appVersion}")))
-            sheet.row(listOf(text("著作权 传康Kk · 免费供应")), Styles.NOTE)
+
+            section("导出")
+            line("导出时间", dateTime(summary.exportedAtMillis))
+            line("导出软件", text("WiFi 扳手 ${summary.appVersion}"))
             sheet.end()
         }
 
@@ -295,10 +354,9 @@ object SessionWorkbookWriter {
             const val TARGET_LABEL = "目标扭矩 N·m"
             const val ACTUAL_LABEL = "实际扭矩 N·m"
             val NOTES = listOf(
-                "「过程数据」为本记录全部过程点，未截断；图表可能按序号抽样，抽样口径见「图表」页。",
-                "接收时间为手机接收时间：同一帧的多个点共用接收时间，不是设备逐点时戳。",
-                "未标定：本表不含顶升力等正式力值。",
-                "分离点 / 平衡点：待分析，本软件未做确认。",
+                "「过程数据」为本记录全部过程点，未截断。",
+                "接收时间为手机接收时间，同一帧的多个点共用。",
+                "未标定：不含顶升力等正式力值。",
             )
         }
     }
@@ -362,7 +420,7 @@ object SessionWorkbookWriter {
             "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" " +
             "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" " +
             "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">" +
-            "<dc:title>${Xml.escape("WiFi 扳手 R${summary.recordId} ${summary.slabNo} ${summary.pointNo}")}</dc:title>" +
+            "<dc:title>${Xml.escape("WiFi 扳手 R${summary.recordId}")}</dc:title>" +
             "<dc:creator>WiFi 扳手</dc:creator>" +
             "<dcterms:created xsi:type=\"dcterms:W3CDTF\">$iso</dcterms:created>" +
             "</cp:coreProperties>"

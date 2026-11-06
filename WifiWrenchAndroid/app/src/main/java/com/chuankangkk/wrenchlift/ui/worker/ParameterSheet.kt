@@ -120,25 +120,33 @@ fun ParameterSheet(
                 ) {
                     if (pulse) {
                         PulseFields(state.wrenchModel, pulseDraft) { pulseDraft = it }
-                        Text(state.pulseStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (state.pulseStatus.isNotBlank()) {
+                            Text(state.pulseStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
                     } else {
                     ModeSelector(draft.mode) { mode ->
                         draft = draft.copy(mode = mode, targetAngle = if (mode == WifiWrenchParameterSettings.MODE_M1) "0" else draft.targetAngle.takeIf { it != "0" } ?: "90")
                     }
+                    // 两行三列：扭矩一行（目标 / 下限 / 上限，单位 N·m），转角一行（单位 °）；矮屏也一屏放下不用滚。
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WrenchTextField(draft.targetTorque, { draft = draft.copy(targetTorque = it.filter(Char::isDigit).take(5)) }, "目标扭矩 N·m", Modifier.weight(1f), numeric = true)
-                        WrenchTextField(draft.targetAngle, { draft = draft.copy(targetAngle = it.decimalInput()) }, "目标转角 °", Modifier.weight(1f),
-                            enabled = draft.mode == WifiWrenchParameterSettings.MODE_M2, decimal = true)
+                        WrenchTextField(draft.targetTorque, { draft = draft.copy(targetTorque = it.filter(Char::isDigit).take(5)) }, "目标扭矩",
+                            Modifier.weight(1f).testTag("param_target_torque"), numeric = true, suffix = "N·m")
+                        WrenchTextField(draft.torqueLower, { draft = draft.copy(torqueLower = it.filter(Char::isDigit).take(5)) }, "扭矩下限",
+                            Modifier.weight(1f).testTag("param_torque_lower"), numeric = true, suffix = "N·m")
+                        WrenchTextField(draft.torqueUpper, { draft = draft.copy(torqueUpper = it.filter(Char::isDigit).take(5)) }, "扭矩上限",
+                            Modifier.weight(1f).testTag("param_torque_upper"), numeric = true, suffix = "N·m")
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WrenchTextField(draft.torqueLower, { draft = draft.copy(torqueLower = it.filter(Char::isDigit).take(5)) }, "扭矩下限", Modifier.weight(1f), numeric = true)
-                        WrenchTextField(draft.torqueUpper, { draft = draft.copy(torqueUpper = it.filter(Char::isDigit).take(5)) }, "扭矩上限", Modifier.weight(1f), numeric = true)
+                        WrenchTextField(draft.targetAngle, { draft = draft.copy(targetAngle = it.decimalInput()) }, "目标转角",
+                            Modifier.weight(1f).testTag("param_target_angle"), enabled = draft.mode == WifiWrenchParameterSettings.MODE_M2, decimal = true, suffix = "°")
+                        WrenchTextField(draft.angleLower, { draft = draft.copy(angleLower = it.decimalInput()) }, "转角下限",
+                            Modifier.weight(1f).testTag("param_angle_lower"), decimal = true, suffix = "°")
+                        WrenchTextField(draft.angleUpper, { draft = draft.copy(angleUpper = it.decimalInput()) }, "转角上限",
+                            Modifier.weight(1f).testTag("param_angle_upper"), decimal = true, suffix = "°")
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WrenchTextField(draft.angleLower, { draft = draft.copy(angleLower = it.decimalInput()) }, "转角下限 °", Modifier.weight(1f), decimal = true)
-                        WrenchTextField(draft.angleUpper, { draft = draft.copy(angleUpper = it.decimalInput()) }, "转角上限 °", Modifier.weight(1f), decimal = true)
+                    if (state.parameterStatus.isNotBlank()) {
+                        Text(state.parameterStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                    Text(state.parameterStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -199,7 +207,7 @@ private fun PulseFields(model: WrenchModel, draft: PulseDraft, onChange: (PulseD
     val kEnabled = if (model == WrenchModel.PULSE_RC283F) draft.mode != 0x00 else draft.mode == 0x03
     if (model == WrenchModel.PULSE_RC283F) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WrenchTextField(draft.targetTorque, { onChange(draft.copy(targetTorque = it.decimalInput())) }, "目标扭矩 N·m（0.1）", Modifier.weight(1f), decimal = true)
+            WrenchTextField(draft.targetTorque, { onChange(draft.copy(targetTorque = it.decimalInput())) }, "目标扭矩", Modifier.weight(1f), decimal = true, suffix = "N·m", placeholder = "精度 0.1")
             WrenchTextField(draft.k1, { onChange(draft.copy(k1 = digits(it))) }, "K1（50-350）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -208,7 +216,7 @@ private fun PulseFields(model: WrenchModel, draft: PulseDraft, onChange: (PulseD
         }
     } else {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WrenchTextField(draft.presetIndex, { onChange(draft.copy(presetIndex = digits(it))) }, "定点参数序号（1-10）", Modifier.weight(1f), enabled = draft.mode != 0x03, numeric = true)
+            WrenchTextField(draft.presetIndex, { onChange(draft.copy(presetIndex = digits(it))) }, "定点序号（1-10）", Modifier.weight(1f), enabled = draft.mode != 0x03, numeric = true)
             WrenchTextField(draft.setTorqueRaw, { onChange(draft.copy(setTorqueRaw = digits(it))) }, "设定扭矩（原值）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

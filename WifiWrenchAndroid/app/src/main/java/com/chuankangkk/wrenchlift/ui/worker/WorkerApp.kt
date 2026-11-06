@@ -37,7 +37,7 @@ import kotlinx.coroutines.delay
 enum class WorkerScreen { Splash, Guide, Workbench, Records, Settings, Diagnostics, Debug }
 
 /**
- * 正式工人 App 根：启动页 → 工作台 / 连接引导 → 测点与记录 → 设置 / 高级诊断。
+ * 正式工人 App 根：启动页 → 工作台 / 连接引导 → 记录 → 设置 / 高级诊断。只有一台扳手，连上 Wi‑Fi 直接用。
  * 核心启停全在工作台一屏完成，不做多页跳转。
  */
 @Composable
