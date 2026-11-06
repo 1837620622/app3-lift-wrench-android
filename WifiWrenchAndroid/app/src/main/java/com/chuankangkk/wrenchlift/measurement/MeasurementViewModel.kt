@@ -494,7 +494,8 @@ class MeasurementViewModel @JvmOverloads constructor(
             measurementMutex.withLock {
                 sessionId?.let { id ->
                     val latest = _state.value
-                    persistSessionSummary(id, latest.lastResult?.status?.label ?: "采集结束", latest.lastResult, latest.lastPulseResult)
+                    // 断线不等于结束：记录仍可续用，状态保持「采集中」，直到用户结束会话。
+                    persistSessionSummary(id, latest.lastResult?.status?.label ?: "采集中", latest.lastResult, latest.lastPulseResult)
                 }
             }
         }
