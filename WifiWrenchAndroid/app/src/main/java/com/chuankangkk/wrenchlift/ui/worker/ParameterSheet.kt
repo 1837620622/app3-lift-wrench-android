@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -124,29 +123,32 @@ fun ParameterSheet(
                             Text(state.pulseStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     } else {
-                    ModeSelector(draft.mode) { mode ->
-                        draft = draft.copy(mode = mode, targetAngle = if (mode == WifiWrenchParameterSettings.MODE_M1) "0" else draft.targetAngle.takeIf { it != "0" } ?: "90")
-                    }
-                    // 两行三列：扭矩一行（目标 / 下限 / 上限，单位 N·m），转角一行（单位 °）；矮屏也一屏放下不用滚。
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WrenchTextField(draft.targetTorque, { draft = draft.copy(targetTorque = it.filter(Char::isDigit).take(5)) }, "目标扭矩",
-                            Modifier.weight(1f).testTag("param_target_torque"), numeric = true, suffix = "N·m")
-                        WrenchTextField(draft.torqueLower, { draft = draft.copy(torqueLower = it.filter(Char::isDigit).take(5)) }, "扭矩下限",
-                            Modifier.weight(1f).testTag("param_torque_lower"), numeric = true, suffix = "N·m")
-                        WrenchTextField(draft.torqueUpper, { draft = draft.copy(torqueUpper = it.filter(Char::isDigit).take(5)) }, "扭矩上限",
-                            Modifier.weight(1f).testTag("param_torque_upper"), numeric = true, suffix = "N·m")
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WrenchTextField(draft.targetAngle, { draft = draft.copy(targetAngle = it.decimalInput()) }, "目标转角",
-                            Modifier.weight(1f).testTag("param_target_angle"), enabled = draft.mode == WifiWrenchParameterSettings.MODE_M2, decimal = true, suffix = "°")
-                        WrenchTextField(draft.angleLower, { draft = draft.copy(angleLower = it.decimalInput()) }, "转角下限",
-                            Modifier.weight(1f).testTag("param_angle_lower"), decimal = true, suffix = "°")
-                        WrenchTextField(draft.angleUpper, { draft = draft.copy(angleUpper = it.decimalInput()) }, "转角上限",
-                            Modifier.weight(1f).testTag("param_angle_upper"), decimal = true, suffix = "°")
-                    }
-                    if (state.parameterStatus.isNotBlank()) {
-                        Text(state.parameterStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
+                        ModeSelector(draft.mode) { mode ->
+                            draft = draft.copy(mode = mode, targetAngle = if (mode == WifiWrenchParameterSettings.MODE_M1) "0" else draft.targetAngle.takeIf { it != "0" } ?: "90")
+                        }
+                        // 单位写在分组标题里（扭矩 N·m / 转角 °），字段只写「目标 / 下限 / 上限」：
+                        // 旧版把单位当后缀写进输入框，数字一长就和单位叠在一起，标签也在窄格里被裁。
+                        ParamGroup("扭矩（N·m）")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            WrenchTextField(draft.targetTorque, { draft = draft.copy(targetTorque = it.filter(Char::isDigit).take(5)) }, "目标",
+                                Modifier.weight(1f).testTag("param_target_torque"), numeric = true)
+                            WrenchTextField(draft.torqueLower, { draft = draft.copy(torqueLower = it.filter(Char::isDigit).take(5)) }, "下限",
+                                Modifier.weight(1f).testTag("param_torque_lower"), numeric = true)
+                            WrenchTextField(draft.torqueUpper, { draft = draft.copy(torqueUpper = it.filter(Char::isDigit).take(5)) }, "上限",
+                                Modifier.weight(1f).testTag("param_torque_upper"), numeric = true)
+                        }
+                        ParamGroup("转角（°）")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            WrenchTextField(draft.targetAngle, { draft = draft.copy(targetAngle = it.decimalInput()) }, "目标",
+                                Modifier.weight(1f).testTag("param_target_angle"), enabled = draft.mode == WifiWrenchParameterSettings.MODE_M2, decimal = true)
+                            WrenchTextField(draft.angleLower, { draft = draft.copy(angleLower = it.decimalInput()) }, "下限",
+                                Modifier.weight(1f).testTag("param_angle_lower"), decimal = true)
+                            WrenchTextField(draft.angleUpper, { draft = draft.copy(angleUpper = it.decimalInput()) }, "上限",
+                                Modifier.weight(1f).testTag("param_angle_upper"), decimal = true)
+                        }
+                        if (state.parameterStatus.isNotBlank()) {
+                            Text(state.parameterStatus, style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -199,67 +201,66 @@ private fun pulseModes(model: WrenchModel): List<Pair<Int, String>> = when (mode
 private fun defaultPulseDraft(model: WrenchModel): PulseDraft =
     PulseDraft(mode = pulseModes(model).firstOrNull()?.first ?: 0)
 
-/** 0x50 / 0x51 字段（最新协议.docx §12/§13）；按模式只开放有效字段。 */
+/**
+ * 0x50 / 0x51 字段（最新协议.docx §12/§13）；按模式只开放有效字段。
+ * 单位与取值范围写在分组标题里，字段只留短标签（与 M1/M2 参数同一套排法）。
+ */
 @Composable
 private fun PulseFields(model: WrenchModel, draft: PulseDraft, onChange: (PulseDraft) -> Unit) {
     val digits = { value: String -> value.filter(Char::isDigit).take(5) }
     ModeSelector(draft.mode, pulseModes(model)) { onChange(draft.copy(mode = it)) }
     val kEnabled = if (model == WrenchModel.PULSE_RC283F) draft.mode != 0x00 else draft.mode == 0x03
     if (model == WrenchModel.PULSE_RC283F) {
+        ParamGroup("扭矩（N·m，精度 0.1）")
+        WrenchTextField(draft.targetTorque, { onChange(draft.copy(targetTorque = it.decimalInput())) }, "目标", Modifier.fillMaxWidth(), decimal = true)
+        ParamGroup("K 系数：K1 50–350 · K2 1–80 · K3 1–3000")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WrenchTextField(draft.targetTorque, { onChange(draft.copy(targetTorque = it.decimalInput())) }, "目标扭矩", Modifier.weight(1f), decimal = true, suffix = "N·m", placeholder = "精度 0.1")
-            WrenchTextField(draft.k1, { onChange(draft.copy(k1 = digits(it))) }, "K1（50-350）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WrenchTextField(draft.k2, { onChange(draft.copy(k2 = digits(it))) }, "K2（1-80）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
-            WrenchTextField(draft.k3, { onChange(draft.copy(k3 = digits(it))) }, "K3（1-3000）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k1, { onChange(draft.copy(k1 = digits(it))) }, "K1", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k2, { onChange(draft.copy(k2 = digits(it))) }, "K2", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k3, { onChange(draft.copy(k3 = digits(it))) }, "K3", Modifier.weight(1f), enabled = kEnabled, numeric = true)
         }
     } else {
+        ParamGroup("定点：序号 1–10；设定扭矩填原值")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WrenchTextField(draft.presetIndex, { onChange(draft.copy(presetIndex = digits(it))) }, "定点序号（1-10）", Modifier.weight(1f), enabled = draft.mode != 0x03, numeric = true)
-            WrenchTextField(draft.setTorqueRaw, { onChange(draft.copy(setTorqueRaw = digits(it))) }, "设定扭矩（原值）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.presetIndex, { onChange(draft.copy(presetIndex = digits(it))) }, "序号", Modifier.weight(1f), enabled = draft.mode != 0x03, numeric = true)
+            WrenchTextField(draft.setTorqueRaw, { onChange(draft.copy(setTorqueRaw = digits(it))) }, "设定扭矩", Modifier.weight(1f), enabled = kEnabled, numeric = true)
         }
+        ParamGroup("K 系数：K1 50–300 · K2 1–80 · K3 1–20")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WrenchTextField(draft.k1, { onChange(draft.copy(k1 = digits(it))) }, "K1（50-300）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
-            WrenchTextField(draft.k2, { onChange(draft.copy(k2 = digits(it))) }, "K2（1-80）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
-            WrenchTextField(draft.k3, { onChange(draft.copy(k3 = digits(it))) }, "K3（1-20）", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k1, { onChange(draft.copy(k1 = digits(it))) }, "K1", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k2, { onChange(draft.copy(k2 = digits(it))) }, "K2", Modifier.weight(1f), enabled = kEnabled, numeric = true)
+            WrenchTextField(draft.k3, { onChange(draft.copy(k3 = digits(it))) }, "K3", Modifier.weight(1f), enabled = kEnabled, numeric = true)
         }
     }
+    ParamGroup("螺栓：状态 % · 误差精度 · 个数")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        WrenchTextField(draft.boltStatus, { onChange(draft.copy(boltStatus = digits(it))) }, "螺栓状态 %", Modifier.weight(1f), numeric = true)
-        WrenchTextField(draft.precision, { onChange(draft.copy(precision = digits(it))) }, "误差精度", Modifier.weight(1f), numeric = true)
-        WrenchTextField(draft.boltCount, { onChange(draft.copy(boltCount = digits(it))) }, "螺栓个数", Modifier.weight(1f), numeric = true)
+        WrenchTextField(draft.boltStatus, { onChange(draft.copy(boltStatus = digits(it))) }, "状态 %", Modifier.weight(1f), numeric = true)
+        WrenchTextField(draft.precision, { onChange(draft.copy(precision = digits(it))) }, "精度", Modifier.weight(1f), numeric = true)
+        WrenchTextField(draft.boltCount, { onChange(draft.copy(boltCount = digits(it))) }, "个数", Modifier.weight(1f), numeric = true)
     }
 }
 
+/** 参数分组标题：单位和取值范围写在这里，字段里只留短标签；太长可换两行，不省略关键范围。 */
+@Composable
+private fun ParamGroup(title: String) {
+    Text(
+        title,
+        style = WrenchType.labelStyle,
+        color = palette.textSecondary,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(start = 2.dp, top = 2.dp),
+    )
+}
+
+/** 模式分段（M1/M2、脉冲模式）：与设置里的扳手类型同一套分段控件，整组共用字号。 */
 @Composable
 private fun ModeSelector(
     mode: Int,
     options: List<Pair<Int, String>> = listOf(WifiWrenchParameterSettings.MODE_M1 to "M1 定扭矩", WifiWrenchParameterSettings.MODE_M2 to "M2 角度控制"),
     onSelect: (Int) -> Unit,
 ) {
-    val p = palette
-    val shape = WrenchDimens.buttonShape
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = WrenchDimens.touch).clip(shape).background(p.panelSunken).border(1.dp, p.hairline, shape).padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        options.forEach { (value, label) ->
-            val selected = value == mode
-            Box(
-                Modifier
-                    .weight(1f)
-                    .heightIn(min = 42.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (selected) p.panel else p.panelSunken)
-                    .then(if (selected) Modifier.border(1.dp, p.hairline, RoundedCornerShape(8.dp)) else Modifier)
-                    .clickable(role = Role.RadioButton) { onSelect(value) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(label, style = WrenchType.buttonStyle.copy(fontSize = 15.sp), color = if (selected) p.textPrimary else p.textSecondary, maxLines = 1)
-            }
-        }
-    }
+    SegmentedControl(options, mode, onSelect)
 }
 
 private fun String.decimalInput(): String {

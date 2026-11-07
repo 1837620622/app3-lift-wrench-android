@@ -1,10 +1,8 @@
 package com.chuankangkk.wrenchlift.ui.worker
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,9 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,7 +53,7 @@ fun SettingsScreen(
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     WrenchTextField(state.targetWifiName, actions.setWifiName, "扳手 Wi‑Fi 名称", Modifier.fillMaxWidth().testTag("wifi_name"), placeholder = "见扳手铭牌")
                     SectionLabel("扳手类型（确认机型后再改）", Modifier.padding(top = 2.dp))
-                    SegmentedChoice(
+                    SegmentedControl(
                         options = WrenchModel.entries.map { it to it.shortLabel },
                         selected = state.wrenchModel,
                         onSelect = actions.setWrenchModel,
@@ -83,36 +78,6 @@ fun SettingsScreen(
             }
         }
     }
-    }
-}
-
-/** 分段单选（扳手类型）：一行放下，字放不下就缩，不换行。 */
-@Composable
-private fun <T> SegmentedChoice(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, tag: (T) -> String) {
-    val p = palette
-    val shape = WrenchDimens.buttonShape
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = WrenchDimens.touch).clip(shape).background(p.panelSunken).border(1.dp, p.hairline, shape).padding(3.dp)
-            .selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        options.forEach { (value, label) ->
-            val on = value == selected
-            Box(
-                Modifier
-                    .weight(1f)
-                    .heightIn(min = 42.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (on) p.panel else p.panelSunken)
-                    .then(if (on) Modifier.border(1.dp, p.hairline, RoundedCornerShape(8.dp)) else Modifier)
-                    .selectable(selected = on, role = Role.RadioButton, onClick = { onSelect(value) })
-                    .padding(horizontal = 4.dp)
-                    .testTag(tag(value)),
-                contentAlignment = Alignment.Center,
-            ) {
-                FitText(label, WrenchType.buttonStyle.copy(fontSize = 15.sp), color = if (on) p.textPrimary else p.textSecondary, minSize = 11.sp)
-            }
-        }
     }
 }
 
