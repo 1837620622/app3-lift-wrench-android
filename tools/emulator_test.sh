@@ -2,6 +2,10 @@
 set -euo pipefail
 mkdir -p ui-evidence
 adb shell wm size 1280x720
+# 固定横屏：测试用的 ComponentActivity 不带 sensorLandscape，API28 默认竖屏会把主台挤成近似竖条。
+adb shell settings put system accelerometer_rotation 0
+adb shell settings put system user_rotation 1
+adb shell wm size | tee ui-evidence/screen.txt
 adb shell wm density "$1"
 adb shell settings put system font_scale "$2"
 adb install -r apk/debug/app-debug.apk

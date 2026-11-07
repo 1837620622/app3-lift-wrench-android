@@ -126,12 +126,21 @@ fun ControlButton(
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
         elevation = null,
     ) {
-        if (icon != null) {
-            LineIcon(icon, content, size = 20.dp)
-            Spacer(Modifier.width(8.dp))
+        // 窄控制柱 / 大字体：先缩字号；图标+文字放不下就去掉图标，把宽度让给文字，不出「正…」「停止扳…」。
+        val measurer = rememberTextMeasurer()
+        BoxWithConstraints(contentAlignment = Alignment.Center) {
+            val density = LocalDensity.current
+            val iconPx = with(density) { 28.dp.roundToPx() }
+            val showIcon = icon != null && (!constraints.hasBoundedWidth ||
+                measurer.measure(text, WrenchType.buttonStyle.copy(fontSize = 11.sp), maxLines = 1, softWrap = false).size.width + iconPx <= constraints.maxWidth)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                if (showIcon && icon != null) {
+                    LineIcon(icon, content, size = 20.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                FitText(text, WrenchType.buttonStyle, minSize = 11.sp)
+            }
         }
-        // 窄控制柱 / 大字体：整体缩字号，不出「正…」「停止扳…」。
-        FitText(text, WrenchType.buttonStyle, minSize = 11.sp)
     }
 }
 
@@ -157,6 +166,11 @@ fun FitText(
             var size = style.fontSize.value
             var candidate = style
             while (size > minSize.value && measurer.measure(text, candidate, maxLines = 1, softWrap = false).size.width > maxPx) {
+                size -= 0.5f
+                candidate = style.copy(fontSize = size.sp)
+            }
+            // 到 minSize 仍放不下（极窄屏 + 系统大字体）：继续缩到 9sp 兜底，宁可小一点也不吃字。
+            while (size > 9f && measurer.measure(text, candidate, maxLines = 1, softWrap = false).size.width > maxPx) {
                 size -= 0.5f
                 candidate = style.copy(fontSize = size.sp)
             }
