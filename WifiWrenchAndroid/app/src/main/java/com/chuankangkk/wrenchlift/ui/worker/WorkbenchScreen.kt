@@ -256,9 +256,15 @@ private fun WorkbenchTopBar(state: MeasurementState, actions: WorkerActions, onB
                 valueColor = linkColor(state.linkPhase), dot = linkColor(state.linkPhase), onClick = linkAction, tight = tight, dense = short,
             )
             CellDivider()
+            // 远程：已开 = 青绿；已连上但未开 = 琥珀（提醒工人先开远程才能转）；未连接 = 灰（不是警告，只是不可用）。
+            val remoteColor = when {
+                state.remoteEnabled -> p.accent
+                state.connectionState.isOnline -> p.warn
+                else -> p.textSecondary
+            }
             StatusCell(
                 "远程", if (state.remoteEnabled) "已启用" else "未启用", Modifier.weight(0.9f).testTag("remote_status"),
-                valueColor = if (state.remoteEnabled) p.accent else p.warn, dot = if (state.remoteEnabled) p.accent else p.warn, tight = tight, dense = short,
+                valueColor = remoteColor, dot = remoteColor, tight = tight, dense = short,
             )
             CellDivider()
             // 本次已入库点数：工人能看到数据确实在记录（导出即这些点的全量）。
@@ -405,10 +411,11 @@ private fun ReadoutPanel(
             }
         }
         Hairline(Modifier.padding(vertical = if (short) 4.dp else 8.dp))
-        // 极矮屏时控制柱没有状态行：报错 / 操作反馈在这里顶替新鲜度行。
-        val notice = if (tiny) WorkerText.deviceError(state) ?: state.controlMessage.takeIf { it.isNotBlank() } else null
+        // 极矮屏时控制柱没有状态行：报错 / 操作反馈在这里顶替新鲜度行。这里一行很窄，报错用短说法（「报错 18」），不被省略成「扳手报…」。
+        val shortError = WorkerText.deviceErrorShort(state)
+        val notice = if (tiny) shortError ?: state.controlMessage.takeIf { it.isNotBlank() } else null
         if (notice != null) {
-            Text(notice, style = WrenchType.labelStyle, color = if (WorkerText.deviceError(state) != null) p.danger else p.textPrimary,
+            Text(notice, style = WrenchType.labelStyle, color = if (shortError != null) p.danger else p.textPrimary,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("control_message"))
         } else {
             FreshnessLine(freshness, hasData)

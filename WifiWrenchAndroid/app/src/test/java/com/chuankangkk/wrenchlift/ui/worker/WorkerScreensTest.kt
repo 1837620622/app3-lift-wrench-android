@@ -323,7 +323,7 @@ class WorkerScreensTest {
         )
         compose.onNodeWithTag("params").performClick()
         compose.onNodeWithText("定点硬连接").assertExists()
-        compose.onNodeWithText("K1（50-350）").assertExists()
+        compose.onNodeWithText("K1").assertExists()
         capture("rugged-914x411-pulse-params")
         compose.onNodeWithTag("param_save").performClick()
         compose.onNodeWithText("写入").performClick()

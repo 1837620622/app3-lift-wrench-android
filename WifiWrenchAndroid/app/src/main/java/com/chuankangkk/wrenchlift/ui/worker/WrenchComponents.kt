@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,7 +43,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -132,8 +136,9 @@ fun ControlButton(
 }
 
 /**
- * 单行文字：放不下就逐级缩字号（不低于 [minSize]），绝不换行、不出省略号。
- * 中文在宽度差 1px 时会把末字挤到第二行而被 maxLines=1 吞掉，所以这里固定 softWrap=false 并按实测宽度缩。
+ * 单行文字：放不下就逐级缩字号（不低于 [minSize]），绝不换行、不出省略号（设计规范 §6.3「单行防截断」）。
+ * 中文在宽度差 1px 时会把末字挤到第二行而被 maxLines=1 吞掉，所以这里固定 softWrap=false 并按实测宽度缩；
+ * 缩到 [minSize] 仍放不下的，应改用短说法（如「报错 18」），不靠省略号。
  */
 @Composable
 fun FitText(
@@ -161,7 +166,92 @@ fun FitText(
     }
 }
 
-/** 顶栏/页面里的小状态条：圆点 + 白话。 */
+/**
+ * 一组并排文字的共同字号：每一项在 [maxWidthPx] 内放得下的最大字号里取最小的一个，整组字号一致、不会一格大一格小。
+ * 到 [minSize] 仍放不下的，调用方要换短说法（设计规范 §6.3 不允许省略号）。
+ */
+fun sharedFitSize(
+    texts: List<String>,
+    style: TextStyle,
+    maxWidthPx: Int,
+    measurer: TextMeasurer,
+    minSize: TextUnit = 11.sp,
+): TextUnit {
+    var result = style.fontSize.value
+    for (text in texts) {
+        var size = style.fontSize.value
+        while (size > minSize.value && measurer.measure(text, style.copy(fontSize = size.sp), maxLines = 1, softWrap = false).size.width > maxWidthPx) {
+            size -= 0.5f
+        }
+        result = minOf(result, size)
+    }
+    return result.sp
+}
+
+/**
+ * 分段单选（参数模式、扳手类型等）：一行放下，不换行；整组共用一个字号，放不下就一起缩（设计规范 §6.3，不出省略号）。
+ * [tag] 给每格加测试标签（可空）。
+ */
+@Composable
+fun <T> SegmentedControl(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    tag: ((T) -> String)? = null,
+) {
+    val p = palette
+    val shape = WrenchDimens.buttonShape
+    val cellShape = RoundedCornerShape(8.dp)
+    val measurer = rememberTextMeasurer()
+    val style = WrenchType.buttonStyle.copy(fontSize = 15.sp)
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        // 每格可用宽 = (总宽 − 外框留白 − 格间距) ÷ 格数 − 格内左右留白；整组按最窄的那一格定字号。
+        val count = options.size.coerceAtLeast(1)
+        val cellPx = with(LocalDensity.current) {
+            ((maxWidth - 6.dp - 3.dp * (count - 1)) / count - 8.dp).roundToPx()
+        }
+        val size = remember(options, cellPx) { sharedFitSize(options.map { it.second }, style, cellPx, measurer, 11.sp) }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = WrenchDimens.touch)
+                .clip(shape)
+                .background(p.panelSunken)
+                .border(1.dp, p.hairline, shape)
+                .padding(3.dp)
+                .selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            options.forEach { (value, label) ->
+                val on = value == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .heightIn(min = 42.dp)
+                        .clip(cellShape)
+                        .background(if (on) p.panel else p.panelSunken)
+                        .then(if (on) Modifier.border(1.dp, p.hairline, cellShape) else Modifier)
+                        .selectable(selected = on, role = Role.RadioButton, onClick = { onSelect(value) })
+                        .padding(horizontal = 4.dp)
+                        .then(if (tag != null) Modifier.testTag(tag(value)) else Modifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        label,
+                        style = style.copy(fontSize = size),
+                        color = if (on) p.textPrimary else p.textSecondary,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 顶栏/页面里的小状态条：圆点 + 白话。[maxLines] 默认 1 行；说明文字较长的地方可放到 2 行，不被省略。 */
 @Composable
 fun StatusPill(
     text: String,
@@ -169,6 +259,7 @@ fun StatusPill(
     modifier: Modifier = Modifier,
     icon: WrenchIcon? = null,
     onClick: (() -> Unit)? = null,
+    maxLines: Int = 1,
 ) {
     val p = palette
     val shape = RoundedCornerShape(50)
@@ -189,7 +280,7 @@ fun StatusPill(
         ) {
             if (icon != null) LineIcon(icon, color, size = 16.dp) else Box(Modifier.size(8.dp).clip(CircleShape).background(color))
             Spacer(Modifier.width(6.dp))
-            Text(text, style = WrenchType.bodyStrong.copy(fontSize = 14.sp), color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, style = WrenchType.bodyStrong.copy(fontSize = 14.sp), color = color, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         }
     }
 }

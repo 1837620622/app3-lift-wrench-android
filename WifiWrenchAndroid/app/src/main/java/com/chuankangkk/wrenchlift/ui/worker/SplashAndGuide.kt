@@ -21,7 +21,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -112,16 +114,22 @@ fun ConnectGuideScreen(
                 }
             }
             Panel(Modifier.weight(0.58f).fillMaxHeight(), padding = androidx.compose.foundation.layout.PaddingValues(18.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {
-                    GuideStep(1, "打开系统设置，连上扳手的 Wi‑Fi", state.targetWifiName.takeIf { it.isNotBlank() }?.let { "名称：$it" } ?: "名称见扳手铭牌")
-                    GuideStep(2, "回到这里，会自动连上扳手", null)
-                    // 状态胶囊单独一行；提示写在下面（未连 Wi‑Fi 时第 2 步已说明，不再重复）。
-                    StatusPill(WorkerText.link(state), linkColor(state.linkPhase), icon = WrenchIcon.Wifi, modifier = Modifier.testTag("guide_status"))
+                // 说明区从上往下排，矮屏或大字体时可以往下拉，不会挤压或叠到底部按钮；按钮固定在底部。
+                Column(
+                    Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("guide_info"),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    // 手动断行只放在逗号后：长标题在窄栏里不会把「扳手」从中间劈开。
+                    GuideStep(1, "打开系统设置，\n连上扳手的 Wi‑Fi", state.targetWifiName.takeIf { it.isNotBlank() }?.let { "名称：$it" } ?: "名称见扳手铭牌")
+                    GuideStep(2, "回到这里，\n会自动连上扳手", null)
+                    // 状态胶囊单独一行；提示写在下面（未连 Wi‑Fi 时第 2 步已说明，不再重复）。胶囊允许两行，「请先在系统设置连接扳手 Wi‑Fi」不被省略。
+                    StatusPill(WorkerText.link(state), linkColor(state.linkPhase), icon = WrenchIcon.Wifi, maxLines = 2, modifier = Modifier.testTag("guide_status"))
                     WorkerText.linkHint(state)?.takeIf { state.linkPhase != LinkPhase.NO_WIFI }?.let {
-                        Text(it, style = WrenchType.labelStyle, color = p.textSecondary, modifier = Modifier.padding(top = 0.dp))
+                        Text(it, style = WrenchType.labelStyle, color = p.textSecondary)
                     }
                     Text("当前 Wi‑Fi：${state.currentWifiName}", style = WrenchType.captionStyle.copy(fontSize = 13.sp), color = p.textTertiary)
                 }
+                Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     ControlButton("去连接 Wi‑Fi", WrenchIcon.Wifi, actions.openWifiSettings, Modifier.weight(1f).testTag("open_wifi"), ButtonTone.Accent, height = 56.dp)
                     ControlButton(
